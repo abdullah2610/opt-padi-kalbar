@@ -32,6 +32,13 @@ const RICE_VARIETIES = [
   { id: 'inpara2',          name: 'Inpara 2 (2008) — rawa',       group: 'rekomendasi', hdb: 'R',  blas: 'R',  wereng: null, bercak: null, note: 'Padi rawa/pasang surut: tahan HDB-III + tahan blas (ras tidak dispesifikasi*); toleran Fe/Al.' },
   { id: 'inpara3',          name: 'Inpara 3 (2009) — rawa',       group: 'rekomendasi', hdb: 'RN', blas: null, wereng: null, bercak: null, note: 'JANGAN ditanam di lahan endemis HDB Kalbar (Sambas, Kubu Raya, Sanggau, Kayong Utara). Toleran rendaman 6 hari.' },
   { id: 'situbagendit',     name: 'Situ Bagendit (2003) — amfibi',group: 'rekomendasi', hdb: 'AT', blas: 'AT', wereng: 'RN', bercak: null, note: 'Amfibi (sawah & gogo). Label "agak tahan" PATAH bila N berlebih (kasus Jember KP 40,25%).' },
+  // Tabel 1B — varietas tambahan populer/dianjurkan di Kalimantan Barat
+  { id: 'cakrabuana',       name: 'Cakrabuana Agritan (2018)',    group: 'rekomendasi', hdb: 'AT', blas: 'R',  wereng: 'AT', bercak: null, note: 'Super genjah 104 HSS (panen 75–80 HST). Potensi 10,2 t/ha. Agak tahan WBC 1-2-3. Hindari lahan endemis HDB IV/VIII.' },
+  { id: 'padjadjaran',      name: 'Padjadjaran Agritan (2018)',   group: 'rekomendasi', hdb: 'AT', blas: 'R',  wereng: 'AT', bercak: null, note: 'Potensi 11,0 t/ha; genjah 105 HSS. Agak tahan WBC 1-2. Hindari lahan endemis HDB IV/VIII.' },
+  { id: 'inpari49jembar',   name: 'Inpari 49 Jembar (2021)',      group: 'rekomendasi', hdb: 'R',  blas: 'R',  wereng: 'R',  bercak: null, note: 'Pasangan rotasi Inpari 32 HDB. Tahan HDB-III (gen IRBB50) + WBC 1-2-3. Potensi 9,57 t/ha.' },
+  { id: 'baroma',           name: 'Baroma (2019)',                 group: 'rekomendasi', hdb: 'AT', blas: 'AT', wereng: 'AR', bercak: null, note: 'Beras basmati aromatik. Tahan HDB IV & VIII; agak tahan HDB-III. Sudah dipanen DTPH Kalbar. Segmen premium.' },
+  { id: 'inparinutrizinc',  name: 'Inpari IR Nutri Zinc (2019)',  group: 'rekomendasi', hdb: 'AT', blas: 'R',  wereng: null, bercak: null, note: 'Biofortifikasi anti-stunting (Zn 29–34 ppm). Rentan HDB IV & VIII — rotasi wajib tiap musim dengan varietas tahan HDB.' },
+  { id: 'inpago13fortiz',   name: 'Inpago 13 Fortiz (~2021)',     group: 'rekomendasi', hdb: 'AT', blas: 'R',  wereng: null, bercak: null, note: 'Padi gogo lahan kering masam (PMK). Zn 34 ppm + protein 9,83%. Rentan HDB IV & VIII. Cocok Bengkayang/Landak/Sintang.' },
   // Tabel 2 — referensi/kontrol
   { id: 'ciherang',         name: 'Ciherang (2000) — referensi',  group: 'referensi',   hdb: 'R',  blas: null, wereng: null, bercak: null, note: 'Tahan HDB-III; rentan IV & VIII. Tidak ada SK khusus untuk blas.' },
   { id: 'ir64',             name: 'IR64 — kontrol tahan',          group: 'referensi',   hdb: 'AT', blas: 'R',  wereng: null, bercak: null, note: 'Kontrol tahan internasional. Agak tahan HDB.' },
@@ -40,6 +47,9 @@ const RICE_VARIETIES = [
   { id: 'inpari6',          name: 'Inpari 6 Jete (2008) — ref.',   group: 'referensi',   hdb: 'R',  blas: null, wereng: null, bercak: null, note: 'Tahan HDB strain III, IV, & VIII.' },
   { id: 'inpari30',         name: 'Inpari 30 Ciherang Sub 1',      group: 'referensi',   hdb: 'R',  blas: null, wereng: null, bercak: null, note: 'Kontrol tahan HDB; toleran rendaman.' },
   { id: 'inpari48blas',     name: 'Inpari 48 Blas (2020)',         group: 'referensi',   hdb: 'RN', blas: 'R',  wereng: null, bercak: null, note: 'Diintroduksi BPTP Kalbar Sambas 2022 (6,35 t/ha). Untuk tekanan blas berat — rentan HDB.' },
+  { id: 'inpari42gsr',      name: 'Inpari 42 Agritan GSR (2016)',  group: 'referensi',   hdb: 'R',  blas: 'R',  wereng: 'R',  bercak: null, note: 'Green Super Rice. Diuji di Sambas Kalbar (~6 t/ha). Tahan HDB fase generatif; toleran kekeringan & wereng.' },
+  { id: 'inpari43gsr',      name: 'Inpari 43 Agritan GSR (2016)',  group: 'referensi',   hdb: 'AT', blas: 'AT', wereng: null, bercak: null, note: 'Direkomendasikan lahan endemis HDB + blas 0–600 mdpl. Potensi 9,02 t/ha. Toleran kekeringan.' },
+  { id: 'inpago9',          name: 'Inpago 9 (2012) — gogo',        group: 'referensi',   hdb: 'AT', blas: 'R',  wereng: 'AT', bercak: null, note: 'Padi gogo lahan kering PMK Kalimantan. Potensi 5,2 t/ha. Agak tahan WBC biotipe 1.' },
   { id: 'tn1',              name: 'TN1 — kontrol rentan',          group: 'referensi',   hdb: 'SR', blas: 'SR', wereng: 'SR', bercak: null, note: 'Standar IRRI sebagai cek rentan. JANGAN dibudidayakan komersial.' },
 ];
 
@@ -89,7 +99,7 @@ function onCityChange() {
 
 const VARIETY_GROUP_LABELS = {
   default:     'Default',
-  rekomendasi: 'Rekomendasi tanam Kalbar (Tabel 1)',
+  rekomendasi: 'Rekomendasi tanam Kalbar (Tabel 1 & 1B)',
   referensi:   'Varietas referensi / kontrol (Tabel 2)',
 };
 
