@@ -100,53 +100,68 @@ function initVarietySelector() {
   const stored = localStorage.getItem(VARIETY_STORAGE_KEY);
   if (stored && RICE_VARIETIES.some(v => v.id === stored)) currentVarietyId = stored;
 
-  const search   = document.getElementById('variety-search');
-  const dropdown = document.getElementById('variety-dropdown');
-  const wrap     = document.getElementById('variety-selector-wrap');
+  const trigger = document.getElementById('variety-trigger');
+  const search  = document.getElementById('variety-search');
+  const list    = document.getElementById('variety-list');
+  const wrap    = document.getElementById('variety-selector-wrap');
 
-  setVarietySearchDisplay();
+  setVarietyTriggerLabel();
   renderVarietyNote();
 
-  search.addEventListener('focus', () => {
-    varietyHighlightIndex = -1;
-    renderVarietyDropdown(search.value.trim());
-    openVarietyDropdown();
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isVarietyPanelOpen()) closeVarietyPanel();
+    else openVarietyPanel();
   });
 
   search.addEventListener('input', () => {
     varietyHighlightIndex = -1;
-    renderVarietyDropdown(search.value.trim());
-    openVarietyDropdown();
+    renderVarietyList(search.value.trim());
   });
 
   search.addEventListener('keydown', onVarietySearchKeydown);
 
-  search.addEventListener('blur', () => {
-    setTimeout(() => {
-      if (!wrap.contains(document.activeElement)) {
-        closeVarietyDropdown();
-        setVarietySearchDisplay();
-      }
-    }, 120);
-  });
-
   document.addEventListener('click', (e) => {
-    if (!wrap.contains(e.target)) closeVarietyDropdown();
+    if (!wrap.contains(e.target)) closeVarietyPanel();
   });
 
-  dropdown.addEventListener('mousedown', (e) => {
+  list.addEventListener('mousedown', (e) => {
     const btn = e.target.closest('[data-variety-id]');
     if (!btn) return;
     e.preventDefault();
     selectVariety(btn.dataset.varietyId);
   });
-
-  renderVarietyDropdown('');
 }
 
-function setVarietySearchDisplay() {
+function setVarietyTriggerLabel() {
+  const label = document.getElementById('variety-label');
+  if (label) label.textContent = getCurrentVariety().name;
+}
+
+function isVarietyPanelOpen() {
+  return !document.getElementById('variety-panel').classList.contains('hidden');
+}
+
+function openVarietyPanel() {
+  const panel  = document.getElementById('variety-panel');
   const search = document.getElementById('variety-search');
-  if (search) search.value = getCurrentVariety().name;
+  const trigger = document.getElementById('variety-trigger');
+  varietyHighlightIndex = -1;
+  search.value = '';
+  renderVarietyList('');
+  panel.classList.remove('hidden');
+  trigger.setAttribute('aria-expanded', 'true');
+  setTimeout(() => search.focus(), 0);
+}
+
+function closeVarietyPanel() {
+  const panel  = document.getElementById('variety-panel');
+  const search = document.getElementById('variety-search');
+  const trigger = document.getElementById('variety-trigger');
+  panel.classList.add('hidden');
+  trigger.setAttribute('aria-expanded', 'false');
+  search.value = '';
+  varietyHighlightIndex = -1;
 }
 
 function filterVarieties(query) {
@@ -157,22 +172,13 @@ function filterVarieties(query) {
   );
 }
 
-function openVarietyDropdown() {
-  document.getElementById('variety-dropdown').classList.remove('hidden');
-}
-
-function closeVarietyDropdown() {
-  document.getElementById('variety-dropdown').classList.add('hidden');
-  varietyHighlightIndex = -1;
-}
-
-function renderVarietyDropdown(query) {
-  const dropdown = document.getElementById('variety-dropdown');
+function renderVarietyList(query) {
+  const list = document.getElementById('variety-list');
   varietyFilteredList = filterVarieties(query);
-  dropdown.innerHTML = '';
+  list.innerHTML = '';
 
   if (varietyFilteredList.length === 0) {
-    dropdown.innerHTML = '<p class="px-3 py-2 text-xs text-gray-500">Varietas tidak ditemukan</p>';
+    list.innerHTML = '<p class="px-3 py-2 text-xs text-gray-500">Varietas tidak ditemukan</p>';
     return;
   }
 
@@ -183,7 +189,7 @@ function renderVarietyDropdown(query) {
       const label = document.createElement('div');
       label.className = 'px-3 py-1 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100';
       label.textContent = VARIETY_GROUP_LABELS[v.group] || v.group;
-      dropdown.appendChild(label);
+      list.appendChild(label);
     }
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -192,14 +198,14 @@ function renderVarietyDropdown(query) {
     btn.className = 'variety-option block w-full text-left px-3 py-2 text-sm hover:bg-green-50'
       + (v.id === currentVarietyId ? ' bg-green-50 font-medium text-green-800' : ' text-gray-800');
     btn.textContent = v.name;
-    dropdown.appendChild(btn);
+    list.appendChild(btn);
   });
   updateVarietyHighlight();
 }
 
 function updateVarietyHighlight() {
-  const dropdown = document.getElementById('variety-dropdown');
-  dropdown.querySelectorAll('.variety-option').forEach(el => {
+  const list = document.getElementById('variety-list');
+  list.querySelectorAll('.variety-option').forEach(el => {
     const hi = Number(el.dataset.listIndex) === varietyHighlightIndex;
     el.classList.toggle('variety-option-highlight', hi);
     if (hi) el.scrollIntoView({ block: 'nearest' });
@@ -213,13 +219,11 @@ function onVarietySearchKeydown(e) {
     if (!n) return;
     varietyHighlightIndex = varietyHighlightIndex < n - 1 ? varietyHighlightIndex + 1 : 0;
     updateVarietyHighlight();
-    openVarietyDropdown();
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
     if (!n) return;
     varietyHighlightIndex = varietyHighlightIndex > 0 ? varietyHighlightIndex - 1 : n - 1;
     updateVarietyHighlight();
-    openVarietyDropdown();
   } else if (e.key === 'Enter') {
     e.preventDefault();
     if (varietyHighlightIndex >= 0 && varietyFilteredList[varietyHighlightIndex]) {
@@ -228,17 +232,16 @@ function onVarietySearchKeydown(e) {
       selectVariety(varietyFilteredList[0].id);
     }
   } else if (e.key === 'Escape') {
-    closeVarietyDropdown();
-    setVarietySearchDisplay();
-    e.target.blur();
+    closeVarietyPanel();
+    document.getElementById('variety-trigger').focus();
   }
 }
 
 function selectVariety(id) {
   if (!RICE_VARIETIES.some(v => v.id === id)) return;
   currentVarietyId = id;
-  setVarietySearchDisplay();
-  closeVarietyDropdown();
+  setVarietyTriggerLabel();
+  closeVarietyPanel();
   applyVarietyChange();
 }
 

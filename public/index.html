@@ -19,7 +19,8 @@
     #forecast-scroll::-webkit-scrollbar { height:4px }
     #forecast-scroll::-webkit-scrollbar-thumb { background:#d1d5db; border-radius:2px }
     .variety-option-highlight { background:#dcfce7; }
-    #variety-dropdown { scrollbar-width:thin; scrollbar-color:#d1d5db transparent }
+    #variety-list { scrollbar-width:thin; scrollbar-color:#d1d5db transparent }
+    #variety-trigger[aria-expanded="true"] .variety-chevron { transform:rotate(180deg); }
 </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -57,13 +58,24 @@
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3 flex items-center gap-3">
       <span class="text-lg">🌾</span>
       <div class="flex-1">
-        <label for="variety-search" class="text-xs text-gray-500 font-medium uppercase tracking-wide block mb-1">Varietas Padi</label>
+        <label for="variety-trigger" class="text-xs text-gray-500 font-medium uppercase tracking-wide block mb-1">Varietas Padi</label>
         <div id="variety-selector-wrap" class="relative">
-          <input type="text" id="variety-search" autocomplete="off"
-                 placeholder="Ketik untuk mencari varietas…"
-                 class="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-green-500" />
-          <div id="variety-dropdown"
-               class="hidden absolute z-30 left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg"></div>
+          <button type="button" id="variety-trigger" aria-haspopup="listbox" aria-expanded="false"
+                  class="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-green-500 flex items-center gap-2 text-left">
+            <span id="variety-label" class="flex-1 truncate text-gray-800"></span>
+            <svg class="variety-chevron w-4 h-4 shrink-0 text-gray-500 transition-transform" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.94a.75.75 0 111.08 1.04l-4.24 4.5a.75.75 0 01-1.08 0l-4.24-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/>
+            </svg>
+          </button>
+          <div id="variety-panel"
+               class="hidden absolute z-30 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+            <div class="p-2 border-b border-gray-100 bg-white">
+              <input type="text" id="variety-search" autocomplete="off"
+                     placeholder="Cari varietas…"
+                     class="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-green-500" />
+            </div>
+            <div id="variety-list" class="max-h-48 overflow-y-auto" role="listbox"></div>
+          </div>
         </div>
         <p id="variety-note" class="hidden text-xs mt-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1"></p>
       </div>
