@@ -1,5 +1,6 @@
 const API_BASE_URL = window.location.origin;
 const WEATHER_REFRESH_MS = 300000;
+const VARIETY_STORAGE_KEY = 'sipopt:varietyId';
 
 const KALBAR_CITIES = [
   { name: 'Kota Pontianak',    lat: -0.0263, lon: 109.3425 },
@@ -18,12 +19,38 @@ const KALBAR_CITIES = [
   { name: 'Kab. Kubu Raya',    lat: -0.2667, lon: 109.5333 },
 ];
 
+// ── Varietas Padi (sumber: Deskripsi VUB Padi BB Padi/Balitbangtan 2015) ─────
+// Skala SES IRRI 2014: R=Tahan, AT=Agak Tahan, AR=Agak Rentan, RN=Rentan, SR=Sangat Rentan, null=tidak diuji
+// hdb: reaksi patotipe III (dominan Indonesia). blas: reaksi ras 033 (dominan diuji).
+// wereng: reaksi WBC biotipe gabungan; bercak: tidak ada data genetik di sumber rujukan.
+const RICE_VARIETIES = [
+  { id: 'umum',             name: 'Umum / Tidak tahu',           group: 'default',     hdb: null, blas: null, wereng: null, bercak: null, note: '' },
+  // Tabel 1 — rekomendasi tanam Kalbar
+  { id: 'inpari32hdb',      name: 'Inpari 32 HDB (2013)',         group: 'rekomendasi', hdb: 'R',  blas: 'R',  wereng: 'AR', bercak: null, note: 'Unggulan Kalbar: tahan HDB-III + blas-033. Potensi 8,42 t/ha.' },
+  { id: 'inpari36',         name: 'Inpari 36 Lanrang (2015)',     group: 'rekomendasi', hdb: 'RN', blas: 'R',  wereng: null, bercak: null, note: 'Pilihan jika tekanan blas dominan. Rentan HDB-III & VIII.' },
+  { id: 'inpari37',         name: 'Inpari 37 Lanrang (2015)',     group: 'rekomendasi', hdb: 'AT', blas: 'AT', wereng: 'AR', bercak: null, note: 'Cocok HDB campuran; agak rentan WBC biotipe 1-2, rentan biotipe 3.' },
+  { id: 'inpara2',          name: 'Inpara 2 (2008) — rawa',       group: 'rekomendasi', hdb: 'R',  blas: 'R',  wereng: null, bercak: null, note: 'Padi rawa/pasang surut: tahan HDB-III + tahan blas (ras tidak dispesifikasi*); toleran Fe/Al.' },
+  { id: 'inpara3',          name: 'Inpara 3 (2009) — rawa',       group: 'rekomendasi', hdb: 'RN', blas: null, wereng: null, bercak: null, note: 'JANGAN ditanam di lahan endemis HDB Kalbar (Sambas, Kubu Raya, Sanggau, Kayong Utara). Toleran rendaman 6 hari.' },
+  { id: 'situbagendit',     name: 'Situ Bagendit (2003) — amfibi',group: 'rekomendasi', hdb: 'AT', blas: 'AT', wereng: 'RN', bercak: null, note: 'Amfibi (sawah & gogo). Label "agak tahan" PATAH bila N berlebih (kasus Jember KP 40,25%).' },
+  // Tabel 2 — referensi/kontrol
+  { id: 'ciherang',         name: 'Ciherang (2000) — referensi',  group: 'referensi',   hdb: 'R',  blas: null, wereng: null, bercak: null, note: 'Tahan HDB-III; rentan IV & VIII. Tidak ada SK khusus untuk blas.' },
+  { id: 'ir64',             name: 'IR64 — kontrol tahan',          group: 'referensi',   hdb: 'AT', blas: 'R',  wereng: null, bercak: null, note: 'Kontrol tahan internasional. Agak tahan HDB.' },
+  { id: 'mekongga',         name: 'Mekongga (2004) — referensi',   group: 'referensi',   hdb: 'AT', blas: 'R',  wereng: null, bercak: null, note: 'Agak tahan HDB strain IV; tahan blas.' },
+  { id: 'inpari1',          name: 'Inpari 1 (2008) — referensi',   group: 'referensi',   hdb: 'R',  blas: null, wereng: null, bercak: null, note: 'Tahan HDB strain III, IV, & VIII.' },
+  { id: 'inpari6',          name: 'Inpari 6 Jete (2008) — ref.',   group: 'referensi',   hdb: 'R',  blas: null, wereng: null, bercak: null, note: 'Tahan HDB strain III, IV, & VIII.' },
+  { id: 'inpari30',         name: 'Inpari 30 Ciherang Sub 1',      group: 'referensi',   hdb: 'R',  blas: null, wereng: null, bercak: null, note: 'Kontrol tahan HDB; toleran rendaman.' },
+  { id: 'inpari48blas',     name: 'Inpari 48 Blas (2020)',         group: 'referensi',   hdb: 'RN', blas: 'R',  wereng: null, bercak: null, note: 'Diintroduksi BPTP Kalbar Sambas 2022 (6,35 t/ha). Untuk tekanan blas berat — rentan HDB.' },
+  { id: 'tn1',              name: 'TN1 — kontrol rentan',          group: 'referensi',   hdb: 'SR', blas: 'SR', wereng: 'SR', bercak: null, note: 'Standar IRRI sebagai cek rentan. JANGAN dibudidayakan komersial.' },
+];
+
 // State
 let currentCityIndex = 0;
+let currentVarietyId = 'umum';
 let lastWeatherUpdate = 0;
 let weatherChart = null;
 let rainChart = null;
 let lastForecast = null;
+let lastWeatherSnapshot = null;
 let currentForecastDisease = 'all';
 let weatherTimer = null;
 
@@ -56,6 +83,282 @@ function onCityChange() {
   currentCityIndex = parseInt(sel.value, 10);
   lastWeatherUpdate = 0;
   fetchAndRender();
+}
+
+// ── Variety Selector (searchable combobox) ───────────────────────────────────
+
+const VARIETY_GROUP_LABELS = {
+  default:     'Default',
+  rekomendasi: 'Rekomendasi tanam Kalbar (Tabel 1)',
+  referensi:   'Varietas referensi / kontrol (Tabel 2)',
+};
+
+let varietyFilteredList = [];
+let varietyHighlightIndex = -1;
+
+function initVarietySelector() {
+  const stored = localStorage.getItem(VARIETY_STORAGE_KEY);
+  if (stored && RICE_VARIETIES.some(v => v.id === stored)) currentVarietyId = stored;
+
+  const search   = document.getElementById('variety-search');
+  const dropdown = document.getElementById('variety-dropdown');
+  const wrap     = document.getElementById('variety-selector-wrap');
+
+  setVarietySearchDisplay();
+  renderVarietyNote();
+
+  search.addEventListener('focus', () => {
+    varietyHighlightIndex = -1;
+    renderVarietyDropdown(search.value.trim());
+    openVarietyDropdown();
+  });
+
+  search.addEventListener('input', () => {
+    varietyHighlightIndex = -1;
+    renderVarietyDropdown(search.value.trim());
+    openVarietyDropdown();
+  });
+
+  search.addEventListener('keydown', onVarietySearchKeydown);
+
+  search.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (!wrap.contains(document.activeElement)) {
+        closeVarietyDropdown();
+        setVarietySearchDisplay();
+      }
+    }, 120);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) closeVarietyDropdown();
+  });
+
+  dropdown.addEventListener('mousedown', (e) => {
+    const btn = e.target.closest('[data-variety-id]');
+    if (!btn) return;
+    e.preventDefault();
+    selectVariety(btn.dataset.varietyId);
+  });
+
+  renderVarietyDropdown('');
+}
+
+function setVarietySearchDisplay() {
+  const search = document.getElementById('variety-search');
+  if (search) search.value = getCurrentVariety().name;
+}
+
+function filterVarieties(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return RICE_VARIETIES;
+  return RICE_VARIETIES.filter(v =>
+    v.name.toLowerCase().includes(q) || v.id.toLowerCase().includes(q)
+  );
+}
+
+function openVarietyDropdown() {
+  document.getElementById('variety-dropdown').classList.remove('hidden');
+}
+
+function closeVarietyDropdown() {
+  document.getElementById('variety-dropdown').classList.add('hidden');
+  varietyHighlightIndex = -1;
+}
+
+function renderVarietyDropdown(query) {
+  const dropdown = document.getElementById('variety-dropdown');
+  varietyFilteredList = filterVarieties(query);
+  dropdown.innerHTML = '';
+
+  if (varietyFilteredList.length === 0) {
+    dropdown.innerHTML = '<p class="px-3 py-2 text-xs text-gray-500">Varietas tidak ditemukan</p>';
+    return;
+  }
+
+  let lastGroup = null;
+  varietyFilteredList.forEach((v, i) => {
+    if (v.group !== lastGroup) {
+      lastGroup = v.group;
+      const label = document.createElement('div');
+      label.className = 'px-3 py-1 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100';
+      label.textContent = VARIETY_GROUP_LABELS[v.group] || v.group;
+      dropdown.appendChild(label);
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.varietyId = v.id;
+    btn.dataset.listIndex = String(i);
+    btn.className = 'variety-option block w-full text-left px-3 py-2 text-sm hover:bg-green-50'
+      + (v.id === currentVarietyId ? ' bg-green-50 font-medium text-green-800' : ' text-gray-800');
+    btn.textContent = v.name;
+    dropdown.appendChild(btn);
+  });
+  updateVarietyHighlight();
+}
+
+function updateVarietyHighlight() {
+  const dropdown = document.getElementById('variety-dropdown');
+  dropdown.querySelectorAll('.variety-option').forEach(el => {
+    const hi = Number(el.dataset.listIndex) === varietyHighlightIndex;
+    el.classList.toggle('variety-option-highlight', hi);
+    if (hi) el.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function onVarietySearchKeydown(e) {
+  const n = varietyFilteredList.length;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (!n) return;
+    varietyHighlightIndex = varietyHighlightIndex < n - 1 ? varietyHighlightIndex + 1 : 0;
+    updateVarietyHighlight();
+    openVarietyDropdown();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!n) return;
+    varietyHighlightIndex = varietyHighlightIndex > 0 ? varietyHighlightIndex - 1 : n - 1;
+    updateVarietyHighlight();
+    openVarietyDropdown();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (varietyHighlightIndex >= 0 && varietyFilteredList[varietyHighlightIndex]) {
+      selectVariety(varietyFilteredList[varietyHighlightIndex].id);
+    } else if (n === 1) {
+      selectVariety(varietyFilteredList[0].id);
+    }
+  } else if (e.key === 'Escape') {
+    closeVarietyDropdown();
+    setVarietySearchDisplay();
+    e.target.blur();
+  }
+}
+
+function selectVariety(id) {
+  if (!RICE_VARIETIES.some(v => v.id === id)) return;
+  currentVarietyId = id;
+  setVarietySearchDisplay();
+  closeVarietyDropdown();
+  applyVarietyChange();
+}
+
+function applyVarietyChange() {
+  try { localStorage.setItem(VARIETY_STORAGE_KEY, currentVarietyId); } catch (_) {}
+  renderVarietyNote();
+  if (lastWeatherSnapshot) {
+    const { current, cumulative } = lastWeatherSnapshot;
+    const diseases = calculateDiseaseRisks(current.suhu, current.rh, current.hujan_7hari, cumulative);
+    updateRiskSection(diseases);
+  }
+  if (lastForecast) updateForecastSection(lastForecast);
+}
+
+function renderVarietyNote() {
+  const v   = getCurrentVariety();
+  const box = document.getElementById('variety-note');
+  if (!v.note) { box.classList.add('hidden'); box.textContent = ''; return; }
+  box.classList.remove('hidden');
+  box.textContent = v.note;
+}
+
+function getCurrentVariety() {
+  return RICE_VARIETIES.find(v => v.id === currentVarietyId) || RICE_VARIETIES[0];
+}
+
+// reaction → label singkat untuk badge card
+const REACTION_LABEL = { R: 'Tahan', AT: 'Agak Tahan', AR: 'Agak Rentan', RN: 'Rentan', SR: 'Sangat Rentan' };
+
+// Adaptive modifier: jika cuaca menekan keras, ketahanan label "tidak sepenuhnya menolong"
+function adaptiveModifier(reaction, isExtremePressure) {
+  if (!reaction) return 0;
+  switch (reaction) {
+    case 'R':  return isExtremePressure ? -1 : -2;
+    case 'AT': return isExtremePressure ?  0 : -1;
+    case 'AR': return isExtremePressure ? +2 : +1;
+    case 'RN': return +2;
+    case 'SR': return +2;
+    default:   return 0;
+  }
+}
+
+// Tekanan cuaca ekstrem per penyakit — gunakan threshold di atas ambang "TINGGI" eksisting
+function isExtremePressure(diseaseId, ctx) {
+  const { suhu, rh, hujan7hari, cum } = ctx;
+  switch (diseaseId) {
+    case 'blast':
+      return (cum?.blast_favorable_days >= 4)
+          || (cum?.max_consec_humid_hours >= 14)
+          || (rh >= 88 && hujan7hari >= 40);
+    case 'hdb':
+      return (cum?.hdb_rain_hours_7d >= 20 && cum?.rh85_hours_72h >= 25)
+          || (rh >= 88 && hujan7hari >= 40);
+    case 'wereng':
+      return (cum?.warm_humid_hours_7d >= 100)
+          || (rh >= 88 && suhu >= 24 && suhu <= 30 && hujan7hari >= 10 && hujan7hari <= 30);
+    case 'bercak':
+      return (cum?.humid80_days >= 4 && hujan7hari >= 25);
+    default: return false;
+  }
+}
+
+const LEVEL_TO_NUM = { TINGGI: 3, SEDANG: 2, RENDAH: 1 };
+const NUM_TO_LEVEL = { 3: 'TINGGI', 2: 'SEDANG', 1: 'RENDAH' };
+const LEVEL_STYLE  = {
+  TINGGI: { icon: '🚨', cls: 'bg-red-50 border-red-300 text-red-700' },
+  SEDANG: { icon: '⚠️', cls: 'bg-yellow-50 border-yellow-300 text-yellow-700' },
+  RENDAH: { icon: '✅', cls: 'bg-green-50 border-green-300 text-green-700' },
+};
+
+function diseaseReactionKey(diseaseId) {
+  switch (diseaseId) {
+    case 'blast':  return 'blas';
+    case 'hdb':    return 'hdb';
+    case 'wereng': return 'wereng';
+    case 'bercak': return 'bercak';
+    default: return null;
+  }
+}
+
+function diseaseReactionTag(diseaseId) {
+  switch (diseaseId) {
+    case 'blast':  return 'blas-033';
+    case 'hdb':    return 'HDB patotipe III';
+    case 'wereng': return 'WBC';
+    case 'bercak': return 'bercak coklat';
+    default: return '';
+  }
+}
+
+// Terapkan modifier varietas ke disease object hasil base cuaca
+function applyVarietyToDisease(disease, ctx) {
+  const variety  = getCurrentVariety();
+  if (variety.id === 'umum') return disease;
+
+  const reactKey = diseaseReactionKey(disease.id);
+  const reaction = reactKey ? variety[reactKey] : null;
+  if (!reaction) {
+    // Tidak ada data genetik → tampilkan badge "tidak diuji" tapi tidak ubah level
+    disease.detail = `${disease.detail} · ${variety.name.split(' ')[0]} ${variety.name.split(' ')[1] || ''}: data ${diseaseReactionTag(disease.id)} tidak diuji`;
+    return disease;
+  }
+
+  const extreme  = isExtremePressure(disease.id, ctx);
+  const mod      = adaptiveModifier(reaction, extreme);
+  const baseNum  = LEVEL_TO_NUM[disease.level] || 1;
+  const finalNum = Math.max(1, Math.min(3, baseNum + mod));
+  const finalLvl = NUM_TO_LEVEL[finalNum];
+
+  const arrow = mod < 0 ? '↓' : mod > 0 ? '↑' : '·';
+  const shortName = variety.name.split(' (')[0];
+  disease.detail = `${disease.detail} ${arrow} ${shortName}: ${REACTION_LABEL[reaction]} ${diseaseReactionTag(disease.id)}${extreme ? ' (tekanan ekstrem)' : ''}`;
+
+  if (finalLvl !== disease.level) {
+    const style    = LEVEL_STYLE[finalLvl];
+    disease.level  = finalLvl;
+    disease.icon   = style.icon;
+    disease.cls    = style.cls;
+  }
+  return disease;
 }
 
 // ── Disease Risk ─────────────────────────────────────────────────────────────
@@ -177,10 +480,11 @@ function calculateDiseaseRisks(suhu, rh, hujan7hari, cum) {
     }
   }
 
-  return diseases;
+  const ctx = { suhu, rh, hujan7hari, cum };
+  return diseases.map(d => applyVarietyToDisease(d, ctx));
 }
 
-function getForecastRiskLevel(suhu_avg, rh_max, hujan7hari, disease) {
+function getForecastBaseLevel(suhu_avg, rh_max, hujan7hari, disease) {
   switch (disease) {
     case 'blast':
       if (rh_max >= 85 && suhu_avg >= 24 && suhu_avg <= 28 && hujan7hari >= 20) return 'TINGGI';
@@ -198,13 +502,42 @@ function getForecastRiskLevel(suhu_avg, rh_max, hujan7hari, disease) {
       if (rh_max >= 85 && suhu_avg >= 22 && suhu_avg <= 30 && hujan7hari >= 5 && hujan7hari <= 35) return 'TINGGI';
       if (rh_max >= 78 && suhu_avg >= 22 && suhu_avg <= 32 && hujan7hari < 40) return 'SEDANG';
       return 'RENDAH';
-    default: {
-      const levels = ['blast','bercak','hdb','wereng'].map(d => getForecastRiskLevel(suhu_avg, rh_max, hujan7hari, d));
-      if (levels.includes('TINGGI')) return 'TINGGI';
-      if (levels.includes('SEDANG')) return 'SEDANG';
-      return 'RENDAH';
-    }
+    default: return 'RENDAH';
   }
+}
+
+// Tekanan ekstrem versi forecast (tanpa data kumulatif jam — pakai threshold rougher)
+function isForecastExtreme(diseaseId, suhu_avg, rh_max, hujan7hari) {
+  switch (diseaseId) {
+    case 'blast':  return rh_max >= 90 && hujan7hari >= 40 && suhu_avg >= 24 && suhu_avg <= 28;
+    case 'hdb':    return rh_max >= 88 && hujan7hari >= 50;
+    case 'wereng': return rh_max >= 88 && suhu_avg >= 24 && suhu_avg <= 30 && hujan7hari >= 10 && hujan7hari <= 30;
+    case 'bercak': return rh_max >= 88 && hujan7hari >= 35;
+    default: return false;
+  }
+}
+
+function applyForecastVarietyModifier(baseLevel, diseaseId, suhu_avg, rh_max, hujan7hari) {
+  const variety = getCurrentVariety();
+  if (variety.id === 'umum') return baseLevel;
+  const reactKey = diseaseReactionKey(diseaseId);
+  const reaction = reactKey ? variety[reactKey] : null;
+  if (!reaction) return baseLevel;
+  const extreme  = isForecastExtreme(diseaseId, suhu_avg, rh_max, hujan7hari);
+  const mod      = adaptiveModifier(reaction, extreme);
+  const baseNum  = LEVEL_TO_NUM[baseLevel] || 1;
+  return NUM_TO_LEVEL[Math.max(1, Math.min(3, baseNum + mod))];
+}
+
+function getForecastRiskLevel(suhu_avg, rh_max, hujan7hari, disease) {
+  if (disease === 'all') {
+    const levels = ['blast','bercak','hdb','wereng'].map(d => getForecastRiskLevel(suhu_avg, rh_max, hujan7hari, d));
+    if (levels.includes('TINGGI')) return 'TINGGI';
+    if (levels.includes('SEDANG')) return 'SEDANG';
+    return 'RENDAH';
+  }
+  const base = getForecastBaseLevel(suhu_avg, rh_max, hujan7hari, disease);
+  return applyForecastVarietyModifier(base, disease, suhu_avg, rh_max, hujan7hari);
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────
@@ -218,15 +551,52 @@ function getPressureInfo(hPa) {
   return            { label: 'Cuaca buruk / badai',           color: 'text-red-600' };
 }
 
+function getSuhuInfo(suhu) {
+  const v = parseFloat(suhu);
+  if (isNaN(v)) return { label: '--', color: 'text-gray-400' };
+  if (v < 20)         return { label: 'Dingin, pertumbuhan lambat', color: 'text-blue-500' };
+  if (v <= 23)        return { label: 'Sejuk, kondisi baik',        color: 'text-green-600' };
+  if (v <= 28)        return { label: 'Optimal blast padi',         color: 'text-red-500' };
+  if (v <= 32)        return { label: 'Hangat, pantau wereng',      color: 'text-amber-500' };
+  return                     { label: 'Panas, stres tanaman',       color: 'text-red-600' };
+}
+
+function getRhInfo(rh) {
+  const v = parseFloat(rh);
+  if (isNaN(v)) return { label: '--', color: 'text-gray-400' };
+  if (v < 60)   return { label: 'Kering, risiko rendah',           color: 'text-green-600' };
+  if (v < 71)   return { label: 'Normal',                          color: 'text-green-500' };
+  if (v < 80)   return { label: 'Lembab, pantau kondisi',          color: 'text-blue-500' };
+  if (v < 85)   return { label: 'Tinggi, waspadai bercak',         color: 'text-amber-500' };
+  if (v < 90)   return { label: 'Sangat tinggi, risiko penyakit',  color: 'text-orange-500' };
+  return               { label: 'Berbahaya, picu ledakan penyakit', color: 'text-red-600' };
+}
+
+function getHujanInfo(mm) {
+  const v = parseFloat(mm);
+  if (isNaN(v)) return { label: '--', color: 'text-gray-400' };
+  if (v <= 5)   return { label: 'Kering',                         color: 'text-amber-500' };
+  if (v <= 20)  return { label: 'Ringan, normal',                  color: 'text-green-600' };
+  if (v <= 40)  return { label: 'Sedang, waspadai blast',          color: 'text-amber-500' };
+  if (v <= 80)  return { label: 'Lebat, waspadai HDB',             color: 'text-orange-500' };
+  return               { label: 'Sangat lebat, waspadai genangan', color: 'text-red-600' };
+}
+
+function setLabel(id, info) {
+  const el = document.getElementById(id);
+  el.textContent = info.label;
+  el.className   = `text-xs mt-1 font-medium ${info.color}`;
+}
+
 function updateWeatherCards(current) {
   document.getElementById('weather-suhu').textContent    = current.suhu;
   document.getElementById('weather-rh').textContent      = current.rh;
   document.getElementById('weather-tekanan').textContent = current.tekanan ?? '--';
   document.getElementById('weather-hujan').textContent   = current.hujan_7hari;
-  const pi  = getPressureInfo(current.tekanan);
-  const lbl = document.getElementById('weather-tekanan-label');
-  lbl.textContent = pi.label;
-  lbl.className   = `text-xs mt-1 font-medium ${pi.color}`;
+  setLabel('weather-suhu-label',    getSuhuInfo(current.suhu));
+  setLabel('weather-rh-label',      getRhInfo(current.rh));
+  setLabel('weather-tekanan-label', getPressureInfo(current.tekanan));
+  setLabel('weather-hujan-label',   getHujanInfo(current.hujan_7hari));
   document.getElementById('weather-section').classList.remove('hidden');
 }
 
@@ -385,6 +755,7 @@ async function fetchAndRender() {
     document.getElementById('loading-section').classList.add('hidden');
     updateWeatherCards(data.current);
     updateWeatherChart(data.history);
+    lastWeatherSnapshot = { current: data.current, cumulative: data.cumulative };
     const diseases = calculateDiseaseRisks(data.current.suhu, data.current.rh, data.current.hujan_7hari, data.cumulative);
     updateRiskSection(diseases);
     if (data.forecast) updateForecastSection(data.forecast);
@@ -397,72 +768,11 @@ async function fetchAndRender() {
   }
 }
 
-// ── Feedback Form ─────────────────────────────────────────────────────────────
-
-let feedbackRating = 0;
-const FEEDBACK_ENDPOINT = 'https://formspree.io/f/xnjrdyzk';
-const RATING_LABELS = ['','Kurang','Cukup','Bermanfaat','Sangat Bermanfaat','Luar Biasa!'];
-
-function renderStars(active) {
-  document.querySelectorAll('.star-btn').forEach(btn => {
-    const n = parseInt(btn.dataset.n, 10);
-    btn.style.color     = n <= active ? '#f59e0b' : '#d1d5db';
-    btn.style.transform = n <= active ? 'scale(1.15)' : 'scale(1)';
-  });
-}
-
-function hoverRating(n) { renderStars(n || feedbackRating); }
-
-function setRating(n) {
-  feedbackRating = n;
-  renderStars(n);
-  const status = document.getElementById('feedback-status');
-  status.textContent = RATING_LABELS[n] || '';
-  status.className   = 'text-xs text-green-600 font-medium';
-}
-
-async function submitFeedback() {
-  if (!feedbackRating) {
-    const status = document.getElementById('feedback-status');
-    status.textContent = 'Pilih bintang terlebih dahulu.';
-    status.className   = 'text-xs text-red-500';
-    return;
-  }
-  const text = document.getElementById('feedback-text').value.trim();
-  const btn  = document.querySelector('#feedback-section button');
-  btn.textContent = 'Mengirim...';
-  btn.disabled    = true;
-
-  try {
-    const res = await fetch(FEEDBACK_ENDPOINT, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        app:    'SiPOPT Padi — BRMP Kalimantan Barat',
-        rating: `${feedbackRating}/5 — ${RATING_LABELS[feedbackRating]}`,
-        kota:   KALBAR_CITIES[currentCityIndex].name,
-        saran:  text || '(tidak ada saran)',
-      }),
-    });
-    if (res.ok) {
-      document.getElementById('feedback-section').classList.add('hidden');
-      document.getElementById('feedback-thanks').classList.remove('hidden');
-    } else {
-      throw new Error('Non-OK');
-    }
-  } catch {
-    btn.textContent = 'Kirim Masukan';
-    btn.disabled    = false;
-    const status = document.getElementById('feedback-status');
-    status.textContent = 'Gagal kirim. Coba lagi.';
-    status.className   = 'text-xs text-red-500';
-  }
-}
-
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 function init() {
   initCitySelector();
+  initVarietySelector();
   fetchAndRender();
   weatherTimer = setInterval(() => {
     if (Date.now() - lastWeatherUpdate >= WEATHER_REFRESH_MS) fetchAndRender();

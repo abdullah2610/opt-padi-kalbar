@@ -18,8 +18,9 @@
     #forecast-scroll { scrollbar-width:thin; scrollbar-color:#d1d5db transparent }
     #forecast-scroll::-webkit-scrollbar { height:4px }
     #forecast-scroll::-webkit-scrollbar-thumb { background:#d1d5db; border-radius:2px }
-    .star-btn { background:none; border:none; cursor:pointer; padding:2px 3px; font-size:28px; line-height:1; transition:transform .1s,color .1s }
-  </style>
+    .variety-option-highlight { background:#dcfce7; }
+    #variety-dropdown { scrollbar-width:thin; scrollbar-color:#d1d5db transparent }
+</style>
 </head>
 <body class="bg-gray-50 min-h-screen">
 
@@ -52,6 +53,22 @@
       </div>
     </div>
 
+    <!-- Variety Selector -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3 flex items-center gap-3">
+      <span class="text-lg">🌾</span>
+      <div class="flex-1">
+        <label for="variety-search" class="text-xs text-gray-500 font-medium uppercase tracking-wide block mb-1">Varietas Padi</label>
+        <div id="variety-selector-wrap" class="relative">
+          <input type="text" id="variety-search" autocomplete="off"
+                 placeholder="Ketik untuk mencari varietas…"
+                 class="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-green-500" />
+          <div id="variety-dropdown"
+               class="hidden absolute z-30 left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg"></div>
+        </div>
+        <p id="variety-note" class="hidden text-xs mt-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1"></p>
+      </div>
+    </div>
+
     <!-- Weather Cards -->
     <div id="weather-section" class="hidden">
       <p class="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2 px-1">🌤️ Cuaca Realtime</p>
@@ -61,12 +78,14 @@
           <div class="text-xs text-gray-500 mb-1">Suhu Udara</div>
           <div id="weather-suhu" class="text-3xl font-bold text-gray-800">--</div>
           <div class="text-xs text-gray-400">°C</div>
+          <div id="weather-suhu-label" class="text-xs mt-1 font-medium text-gray-400">--</div>
         </div>
         <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
           <div class="text-2xl mb-1">💧</div>
           <div class="text-xs text-gray-500 mb-1">Kelembaban</div>
           <div id="weather-rh" class="text-3xl font-bold text-gray-800">--</div>
           <div class="text-xs text-gray-400">%</div>
+          <div id="weather-rh-label" class="text-xs mt-1 font-medium text-gray-400">--</div>
         </div>
         <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
           <div class="text-2xl mb-1">🔽</div>
@@ -80,6 +99,7 @@
           <div class="text-xs text-gray-500 mb-1">Hujan 7 Hari</div>
           <div id="weather-hujan" class="text-3xl font-bold text-gray-800">--</div>
           <div class="text-xs text-gray-400">mm</div>
+          <div id="weather-hujan-label" class="text-xs mt-1 font-medium text-gray-400">--</div>
         </div>
       </div>
       <div id="weather-dummy-warning" class="hidden text-xs text-center text-amber-600 mt-2">
@@ -107,7 +127,24 @@
 
       <!-- Disease Info Panel -->
       <div id="disease-info-panel" class="hidden mt-3 pt-3 border-t border-gray-100 space-y-2 text-xs text-gray-600">
-        <p class="font-semibold text-gray-700">Model kumulatif 7 hari (bukan snapshot):</p>
+        <p class="font-semibold text-gray-700">Penyesuaian Varietas (adaptive):</p>
+        <div class="bg-amber-50 rounded p-2 border border-amber-200">
+          Risiko cuaca digeser berdasarkan ketahanan genetik label SK pelepasan:
+          <strong>Tahan (R)</strong> −2 level (−1 jika tekanan cuaca ekstrem);
+          <strong>Agak Tahan (AT)</strong> −1 (0 jika ekstrem);
+          <strong>Agak Rentan (AR)</strong> +1 (+2 ekstrem);
+          <strong>Rentan (RN)</strong> +2;
+          <strong>Sangat Rentan (SR)</strong> +2;
+          <em>tidak diuji (?)</em> tidak ada penyesuaian.
+          Skala SES IRRI dari <em>Deskripsi VUB Padi</em> BB Padi/Balitbangtan 2015.
+        </div>
+        <div class="bg-red-50 rounded p-2 border border-red-200">
+          ⚠️ <strong>Caveat:</strong> Label SK pelepasan diuji rumah kaca BB Padi Sukamandi terhadap patotipe/ras spesifik.
+          Patotipe Xoo & ras <em>P. oryzae</em> lokal Kalbar dapat berbeda dan ketahanan bisa <em>patah</em>
+          (kasus Situ Bagendit "agak tahan" → KP 40,25% di Jember bila pupuk N berlebih).
+          Pertahankan pupuk N ≤ 200 kg Urea/ha + pengairan berselang + jajar legowo.
+        </div>
+        <p class="font-semibold text-gray-700 pt-2">Model kumulatif 7 hari (bukan snapshot):</p>
         <div class="bg-gray-50 rounded p-2">
           <span class="font-semibold">🔴 Blast Padi</span> — Akumulasi jam RH≥85% &amp; suhu 24-28°C/7hr.
           <strong>Tinggi</strong> jika ≥3 hari favorable + hujan ≥20mm/7hr.
@@ -170,38 +207,10 @@
       </div>
     </div>
 
-    <!-- Feedback Card -->
-    <div id="feedback-section" class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-      <h3 class="text-sm font-semibold text-gray-800 mb-1">💬 Beri Masukan</h3>
-      <p class="text-xs text-gray-500 mb-3">Bantu kami tingkatkan layanan ini.</p>
-
-      <!-- Stars -->
-      <div id="feedback-stars" class="flex gap-1 mb-3">
-        <button class="star-btn" data-n="1" onclick="setRating(1)" onmouseenter="hoverRating(1)" onmouseleave="hoverRating(0)">★</button>
-        <button class="star-btn" data-n="2" onclick="setRating(2)" onmouseenter="hoverRating(2)" onmouseleave="hoverRating(0)">★</button>
-        <button class="star-btn" data-n="3" onclick="setRating(3)" onmouseenter="hoverRating(3)" onmouseleave="hoverRating(0)">★</button>
-        <button class="star-btn" data-n="4" onclick="setRating(4)" onmouseenter="hoverRating(4)" onmouseleave="hoverRating(0)">★</button>
-        <button class="star-btn" data-n="5" onclick="setRating(5)" onmouseenter="hoverRating(5)" onmouseleave="hoverRating(0)">★</button>
-      </div>
-
-      <textarea id="feedback-text" rows="2" maxlength="500" placeholder="Saran atau komentar (opsional)..."
-                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-green-500 resize-none mb-3"></textarea>
-
-      <div class="flex items-center gap-3">
-        <button onclick="submitFeedback()"
-                class="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 rounded-lg transition-colors">
-          Kirim Masukan
-        </button>
-        <span id="feedback-status" class="text-xs text-gray-400"></span>
-      </div>
-    </div>
-
-    <!-- Feedback Thanks -->
-    <div id="feedback-thanks" class="hidden bg-green-50 border border-green-200 rounded-xl p-4 text-center">
-      <div class="text-2xl mb-1">🎉</div>
-      <p class="text-sm font-semibold text-green-800">Terima kasih atas masukan Anda!</p>
-      <p class="text-xs text-green-600 mt-1">Feedback Anda membantu pengembangan layanan ini.</p>
-    </div>
+    <p class="text-center text-gray-400 text-xs py-1">
+      Punya masukan atau pertanyaan?
+      <a href="/masukan.html" class="text-green-600 font-medium underline underline-offset-2">Beri tahu kami</a>
+    </p>
 
     <footer class="text-center text-gray-400 text-xs py-2">
       SiPOPT Padi · BRMP Kalimantan Barat · Data: Open-Meteo.com
