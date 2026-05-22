@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SiPOPT Padi — BRMP Kalimantan Barat</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+          integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
+          crossorigin="anonymous"></script>
+  <style>
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .pulse { animation: pulse 2s cubic-bezier(.4,0,.6,1) infinite }
+    .ftab { background:#f3f4f6; color:#374151; border-color:#d1d5db; cursor:pointer }
+    .ftab:hover { background:#e5e7eb }
+    .ftab.active { background:#16a34a; color:#fff; border-color:#16a34a }
+    #forecast-scroll { scrollbar-width:thin; scrollbar-color:#d1d5db transparent }
+    #forecast-scroll::-webkit-scrollbar { height:4px }
+    #forecast-scroll::-webkit-scrollbar-thumb { background:#d1d5db; border-radius:2px }
+    .star-btn { background:none; border:none; cursor:pointer; padding:2px 3px; font-size:28px; line-height:1; transition:transform .1s,color .1s }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-green-700 text-white shadow-lg sticky top-0 z-20">
+    <div class="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-bold leading-tight flex items-center gap-2">
+          🌾 SiPOPT Padi
+        </h1>
+        <p class="text-green-200 text-xs">BRMP Kalimantan Barat</p>
+      </div>
+      <div class="text-right">
+        <p class="text-green-200 text-xs">Terakhir diperbarui</p>
+        <p id="last-updated" class="text-white text-xs font-medium">--</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-2xl mx-auto px-4 py-5 space-y-4">
+
+    <!-- City Selector -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 px-4 py-3 flex items-center gap-3">
+      <span class="text-lg">📍</span>
+      <div class="flex-1">
+        <label class="text-xs text-gray-500 font-medium uppercase tracking-wide block mb-1">Pilih Lokasi</label>
+        <select id="city-selector" onchange="onCityChange()"
+                class="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-green-500">
+        </select>
+      </div>
+    </div>
+
+    <!-- Weather Cards -->
+    <div id="weather-section" class="hidden">
+      <p class="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2 px-1">🌤️ Cuaca Realtime</p>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
+          <div class="text-2xl mb-1">🌡️</div>
+          <div class="text-xs text-gray-500 mb-1">Suhu Udara</div>
+          <div id="weather-suhu" class="text-3xl font-bold text-gray-800">--</div>
+          <div class="text-xs text-gray-400">°C</div>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
+          <div class="text-2xl mb-1">💧</div>
+          <div class="text-xs text-gray-500 mb-1">Kelembaban</div>
+          <div id="weather-rh" class="text-3xl font-bold text-gray-800">--</div>
+          <div class="text-xs text-gray-400">%</div>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
+          <div class="text-2xl mb-1">🔽</div>
+          <div class="text-xs text-gray-500 mb-1">Tekanan</div>
+          <div id="weather-tekanan" class="text-3xl font-bold text-gray-800">--</div>
+          <div class="text-xs text-gray-400">hPa</div>
+          <div id="weather-tekanan-label" class="text-xs mt-1 font-medium text-gray-400">--</div>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
+          <div class="text-2xl mb-1">🌧️</div>
+          <div class="text-xs text-gray-500 mb-1">Hujan 7 Hari</div>
+          <div id="weather-hujan" class="text-3xl font-bold text-gray-800">--</div>
+          <div class="text-xs text-gray-400">mm</div>
+        </div>
+      </div>
+      <div id="weather-dummy-warning" class="hidden text-xs text-center text-amber-600 mt-2">
+        ⚠️ Menggunakan data estimasi (Open-Meteo tidak tersedia)
+      </div>
+      <p class="text-xs text-center text-gray-400 mt-1">Sumber: Open-Meteo.com (realtime)</p>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading-section" class="pulse text-center py-12">
+      <div class="text-4xl mb-2">⏳</div>
+      <div class="text-gray-500 text-sm">Memuat data cuaca...</div>
+    </div>
+
+    <!-- Risk Section -->
+    <div id="risk-section" class="hidden bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">⚕️ Risiko Penyakit Tanaman</h3>
+        <button onclick="toggleDiseaseInfo()"
+                class="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1">
+          <span>ℹ️</span><span id="info-toggle-label">Cara hitung</span>
+        </button>
+      </div>
+      <div id="risk-cards" class="space-y-2"></div>
+
+      <!-- Disease Info Panel -->
+      <div id="disease-info-panel" class="hidden mt-3 pt-3 border-t border-gray-100 space-y-2 text-xs text-gray-600">
+        <p class="font-semibold text-gray-700">Model kumulatif 7 hari (bukan snapshot):</p>
+        <div class="bg-gray-50 rounded p-2">
+          <span class="font-semibold">🔴 Blast Padi</span> — Akumulasi jam RH≥85% &amp; suhu 24-28°C/7hr.
+          <strong>Tinggi</strong> jika ≥3 hari favorable + hujan ≥20mm/7hr.
+          <em class="text-gray-400">(Pyricularia oryzae; IRRI, BB Padi)</em>
+        </div>
+        <div class="bg-gray-50 rounded p-2">
+          <span class="font-semibold">🟡 Bercak Coklat</span> — Hari RH≥80% ≥10 jam/7hr.
+          <strong>Sedang</strong> jika ≥3 hari + hujan ≥15mm/7hr.
+          <em class="text-gray-400">(Helminthosporium oryzae)</em>
+        </div>
+        <div class="bg-gray-50 rounded p-2">
+          <span class="font-semibold">🔴 Hawar Daun Bakteri</span> — Jam hujan (&gt;1mm) + jam RH≥85%/72hr.
+          <strong>Tinggi</strong> jika ≥15 jam hujan &amp; ≥20 jam RH tinggi/72hr.
+          <em class="text-gray-400">(Xanthomonas oryzae pv. oryzae)</em>
+        </div>
+        <div class="bg-gray-50 rounded p-2">
+          <span class="font-semibold">🔴 Wereng Coklat</span> — Jam optimal (RH≥78%, 22-32°C)/7hr.
+          Hujan &gt;80mm/7hr menekan. <strong>Tinggi</strong> jika ≥80 jam optimal.
+          <em class="text-gray-400">(Nilaparvata lugens)</em>
+        </div>
+        <p class="text-gray-400 text-xs">Model indikatif — bukan diagnosis definitif.</p>
+      </div>
+    </div>
+
+    <!-- Weather Chart -->
+    <div id="weather-chart-section" class="hidden bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-700">Cuaca 24 Jam</h2>
+        <div class="flex gap-1">
+          <button onclick="showWeatherTab('suhu-rh')" id="wtab-suhu-rh"
+                  class="ftab active px-2 py-1 text-xs rounded border">🌡️ Suhu &amp; RH</button>
+          <button onclick="showWeatherTab('hujan')" id="wtab-hujan"
+                  class="ftab px-2 py-1 text-xs rounded border">🌧️ Hujan</button>
+        </div>
+      </div>
+      <div class="relative" style="height:220px">
+        <div id="weather-chart-suhu-rh" class="absolute inset-0">
+          <canvas id="weatherChart" aria-label="Grafik suhu dan kelembaban udara"></canvas>
+        </div>
+        <div id="weather-chart-hujan" class="hidden absolute inset-0">
+          <canvas id="rainChart" aria-label="Grafik curah hujan"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Forecast Section -->
+    <div id="forecast-section" class="hidden bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+      <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">📅 Prakiraan 14 Hari &amp; Potensi Penyakit</h2>
+      <div class="flex gap-1 flex-wrap mb-3">
+        <button onclick="changeForecastTab('all')"    id="ftab-all"    class="ftab active px-2 py-1 text-xs rounded border">Semua</button>
+        <button onclick="changeForecastTab('blast')"  id="ftab-blast"  class="ftab px-2 py-1 text-xs rounded border">Blast</button>
+        <button onclick="changeForecastTab('bercak')" id="ftab-bercak" class="ftab px-2 py-1 text-xs rounded border">Bercak</button>
+        <button onclick="changeForecastTab('hdb')"    id="ftab-hdb"    class="ftab px-2 py-1 text-xs rounded border">HDB</button>
+        <button onclick="changeForecastTab('wereng')" id="ftab-wereng" class="ftab px-2 py-1 text-xs rounded border">Wereng</button>
+      </div>
+      <div id="forecast-scroll" class="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1"></div>
+      <div class="mt-3 flex flex-wrap gap-3 text-xs text-gray-500">
+        <span>🚨 Tinggi</span><span>⚠️ Sedang</span><span>🌿 Rendah</span>
+        <span class="ml-auto text-gray-400">Open-Meteo.com</span>
+      </div>
+    </div>
+
+    <!-- Feedback Card -->
+    <div id="feedback-section" class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+      <h3 class="text-sm font-semibold text-gray-800 mb-1">💬 Beri Masukan</h3>
+      <p class="text-xs text-gray-500 mb-3">Bantu kami tingkatkan layanan ini.</p>
+
+      <!-- Stars -->
+      <div id="feedback-stars" class="flex gap-1 mb-3">
+        <button class="star-btn" data-n="1" onclick="setRating(1)" onmouseenter="hoverRating(1)" onmouseleave="hoverRating(0)">★</button>
+        <button class="star-btn" data-n="2" onclick="setRating(2)" onmouseenter="hoverRating(2)" onmouseleave="hoverRating(0)">★</button>
+        <button class="star-btn" data-n="3" onclick="setRating(3)" onmouseenter="hoverRating(3)" onmouseleave="hoverRating(0)">★</button>
+        <button class="star-btn" data-n="4" onclick="setRating(4)" onmouseenter="hoverRating(4)" onmouseleave="hoverRating(0)">★</button>
+        <button class="star-btn" data-n="5" onclick="setRating(5)" onmouseenter="hoverRating(5)" onmouseleave="hoverRating(0)">★</button>
+      </div>
+
+      <textarea id="feedback-text" rows="2" maxlength="500" placeholder="Saran atau komentar (opsional)..."
+                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-green-500 resize-none mb-3"></textarea>
+
+      <div class="flex items-center gap-3">
+        <button onclick="submitFeedback()"
+                class="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+          Kirim Masukan
+        </button>
+        <span id="feedback-status" class="text-xs text-gray-400"></span>
+      </div>
+    </div>
+
+    <!-- Feedback Thanks -->
+    <div id="feedback-thanks" class="hidden bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+      <div class="text-2xl mb-1">🎉</div>
+      <p class="text-sm font-semibold text-green-800">Terima kasih atas masukan Anda!</p>
+      <p class="text-xs text-green-600 mt-1">Feedback Anda membantu pengembangan layanan ini.</p>
+    </div>
+
+    <footer class="text-center text-gray-400 text-xs py-2">
+      SiPOPT Padi · BRMP Kalimantan Barat · Data: Open-Meteo.com
+    </footer>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
