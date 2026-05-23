@@ -42,37 +42,37 @@ else
   echo "✗ SUPABASE_SERVICE_ROLE_KEY missing di .env.local"
 fi
 
-# CDSE OAuth — prompt user
+# CDSE auth — refresh token (preferred) atau client credentials
 echo ""
-echo "─── CDSE OAuth Client ───"
-echo "Belum punya? Buat di:"
-echo "  https://identity.dataspace.copernicus.eu/auth/realms/CDSE/account/clients"
-echo ""
+echo "─── CDSE Auth ───"
 
-if [[ -n "${CDSE_CLIENT_ID:-}" ]]; then
-  gh secret set CDSE_CLIENT_ID --body "$CDSE_CLIENT_ID"
-  echo "✓ CDSE_CLIENT_ID (dari .env.local)"
-else
-  read -rp "CDSE_CLIENT_ID (skip = enter kosong): " cid
-  if [[ -n "$cid" ]]; then
-    gh secret set CDSE_CLIENT_ID --body "$cid"
-    echo "✓ CDSE_CLIENT_ID"
+TOKEN_CACHE="$HOME/.local/share/openeo-python-client/refresh-tokens.json"
+if [[ -f "$TOKEN_CACHE" ]]; then
+  TOKEN=$(python3 -c "
+import json, sys
+data = json.load(open('$TOKEN_CACHE'))
+for issuer, clients in data.items():
+    if 'copernicus' not in issuer: continue
+    for cid, info in clients.items():
+        print(info.get('refresh_token', ''))
+        sys.exit(0)
+" 2>/dev/null || echo "")
+  if [[ -n "$TOKEN" ]]; then
+    gh secret set CDSE_REFRESH_TOKEN --body "$TOKEN"
+    echo "✓ CDSE_REFRESH_TOKEN (dari local cache $TOKEN_CACHE)"
   else
-    echo "⚠  skipped — workflow akan fail tanpa ini"
+    echo "⚠  cache file ada tapi tidak ditemukan refresh_token CDSE"
+    echo "   Jalankan dulu: cd workers/etl && uv run python main.py login"
   fi
-fi
-
-if [[ -n "${CDSE_CLIENT_SECRET:-}" ]]; then
-  gh secret set CDSE_CLIENT_SECRET --body "$CDSE_CLIENT_SECRET"
-  echo "✓ CDSE_CLIENT_SECRET (dari .env.local)"
 else
-  read -rsp "CDSE_CLIENT_SECRET (skip = enter kosong, input hidden): " cs
+  echo "⚠  Tidak ada refresh token cache di $TOKEN_CACHE"
+  echo "   Jalankan dulu: cd workers/etl && uv run python main.py login"
   echo ""
-  if [[ -n "$cs" ]]; then
-    gh secret set CDSE_CLIENT_SECRET --body "$cs"
-    echo "✓ CDSE_CLIENT_SECRET"
-  else
-    echo "⚠  skipped"
+  echo "   Alternatif: OAuth client credentials"
+  if [[ -n "${CDSE_CLIENT_ID:-}" ]]; then
+    gh secret set CDSE_CLIENT_ID --body "$CDSE_CLIENT_ID"
+    gh secret set CDSE_CLIENT_SECRET --body "${CDSE_CLIENT_SECRET:-}"
+    echo "✓ CDSE_CLIENT_ID + CDSE_CLIENT_SECRET (dari .env.local)"
   fi
 fi
 

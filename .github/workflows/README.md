@@ -12,29 +12,56 @@
 
 ## Setup Sekali (Required Secrets)
 
-### 1. CDSE OAuth Client
+### Opsi A: Refresh Token (recommended — tidak butuh OAuth client)
 
-Device flow (local dev) tidak bisa di CI. Wajib client credentials.
+Login device flow lokal sekali, lalu copy refresh token offline ke GH secret. Bekerja tanpa registrasi OAuth client (yang sering bermasalah di CDSE marketplace UI).
+
+```bash
+# 1. Login device flow lokal (jika belum):
+cd workers/etl && uv run python main.py login
+
+# 2. Extract refresh_token dari cache:
+TOKEN=$(python3 -c "
+import json
+data = json.load(open('/root/.local/share/openeo-python-client/refresh-tokens.json'))
+# Ganti path sesuai user — biasanya ~/.local/share/openeo-python-client/refresh-tokens.json
+for issuer, clients in data.items():
+    for cid, info in clients.items():
+        print(info['refresh_token'])
+        break
+    break
+")
+
+# 3. Set GH secret:
+gh secret set CDSE_REFRESH_TOKEN --body "$TOKEN"
+```
+
+Refresh token type **Offline** (long-lived — survive berbulan-bulan). Re-issue dengan `login` lagi kalau expired.
+
+### Opsi B: OAuth Client Credentials (kalau bisa register)
 
 1. Login https://dataspace.copernicus.eu
 2. Buka https://identity.dataspace.copernicus.eu/auth/realms/CDSE/account/clients
 3. **Create Client** → nama bebas (e.g. `opt-padi-ci`)
-4. Type: **Confidential** (atau Service Account)
-5. Catat `client_id` + `client_secret` (secret cuma muncul sekali)
+4. Type: **Confidential** atau **Service Account**
+5. Catat `client_id` + `client_secret` (secret muncul sekali)
+6. Set:
+   ```bash
+   gh secret set CDSE_CLIENT_ID --body "sh-xxxxxxxx-..."
+   gh secret set CDSE_CLIENT_SECRET --body "xxxxxxxxxx..."
+   ```
 
-### 2. Supabase service role key
+**Note:** CDSE Account Clients UI kadang error / restricted untuk free tier. Kalau gagal, pakai Opsi A.
 
-Dashboard https://supabase.com/dashboard/project/prrxzfmcgkwhrsuuiyox/settings/api-keys → copy `service_role` (secret).
+### Supabase secrets (always required)
 
-### 3. Set GH Secrets
+Dashboard https://supabase.com/dashboard/project/prrxzfmcgkwhrsuuiyox/settings/api-keys → copy `service_role`:
 
 ```bash
-gh secret set CDSE_CLIENT_ID --body "sh-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-gh secret set CDSE_CLIENT_SECRET --body "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 gh secret set SUPABASE_URL --body "https://prrxzfmcgkwhrsuuiyox.supabase.co"
 gh secret set SUPABASE_SERVICE_ROLE_KEY --body "eyJhbGciOiJI..."
 
-# Verify
+# Verify (harus 3 minimum: refresh token + 2 supabase, atau 4 dengan client creds):
 gh secret list
 ```
 

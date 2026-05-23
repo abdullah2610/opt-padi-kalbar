@@ -29,29 +29,36 @@ def connect():
     """Connect ke CDSE openEO.
 
     Auth priority:
-    1. Client credentials (server/CI) — kalau CDSE_CLIENT_ID + CDSE_CLIENT_SECRET di-set.
-    2. Device code flow + refresh token cache — interaktif sekali, subsequent runs otomatis.
-       Cache: ~/.config/openeo-python-client/refresh-tokens.json
+    1. CDSE_REFRESH_TOKEN env (CI workaround — token offline dari device flow lokal).
+       Tidak butuh OAuth client. Default client_id `sh-...` dari provider.
+    2. CDSE_CLIENT_ID + CDSE_CLIENT_SECRET env (server-side OAuth).
+    3. Cached refresh token + device flow fallback (local dev interactive).
     """
     import openeo
 
     conn = openeo.connect(CDSE_OPENEO_URL)
+    refresh_token = os.getenv("CDSE_REFRESH_TOKEN")
     client_id = os.getenv("CDSE_CLIENT_ID")
     client_secret = os.getenv("CDSE_CLIENT_SECRET")
+    public_client_id = os.getenv("CDSE_OIDC_CLIENT_ID", "sh-b1c3a958-52d4-40fe-a333-153595d1c71e")
 
-    if client_id and client_secret:
+    if refresh_token:
+        log.info("openEO auth: refresh_token (env)")
+        conn.authenticate_oidc_refresh_token(
+            refresh_token=refresh_token,
+            client_id=public_client_id,
+        )
+    elif client_id and client_secret:
         log.info("openEO auth: client_credentials")
         conn.authenticate_oidc_client_credentials(
             client_id=client_id,
             client_secret=client_secret,
         )
     else:
-        log.info("openEO auth: refresh-token / device-flow fallback")
+        log.info("openEO auth: refresh-token cache / device-flow fallback")
         def _display(msg: str) -> None:
             print(f"\n>>> {msg}\n", flush=True)
             log.info(msg)
-        # High-level helper: try cached refresh_token first; if missing/expired,
-        # fall back to device flow and persist refresh token to disk.
         conn.authenticate_oidc(
             display=_display,
             max_poll_time=900,

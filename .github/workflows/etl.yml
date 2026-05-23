@@ -33,6 +33,7 @@ jobs:
       run:
         working-directory: workers/etl
     env:
+      CDSE_REFRESH_TOKEN:        ${{ secrets.CDSE_REFRESH_TOKEN }}
       CDSE_CLIENT_ID:            ${{ secrets.CDSE_CLIENT_ID }}
       CDSE_CLIENT_SECRET:        ${{ secrets.CDSE_CLIENT_SECRET }}
       CDSE_OPENEO_URL:           https://openeo.dataspace.copernicus.eu
@@ -80,9 +81,18 @@ jobs:
       - name: Verify secrets
         run: |
           set -e
-          for var in CDSE_CLIENT_ID CDSE_CLIENT_SECRET SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+          # Auth: CDSE_REFRESH_TOKEN OR (CDSE_CLIENT_ID + CDSE_CLIENT_SECRET)
+          if [ -z "$CDSE_REFRESH_TOKEN" ] && [ -z "$CDSE_CLIENT_ID" ]; then
+            echo "::error::Set CDSE_REFRESH_TOKEN (preferred) atau CDSE_CLIENT_ID+SECRET"
+            exit 1
+          fi
+          if [ -n "$CDSE_CLIENT_ID" ] && [ -z "$CDSE_CLIENT_SECRET" ]; then
+            echo "::error::CDSE_CLIENT_ID set tapi CDSE_CLIENT_SECRET kosong"
+            exit 1
+          fi
+          for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
             if [ -z "${!var}" ]; then
-              echo "::error::Missing secret: $var (set via 'gh secret set $var')"
+              echo "::error::Missing secret: $var"
               exit 1
             fi
           done

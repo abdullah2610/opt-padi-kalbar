@@ -90,7 +90,11 @@ jobs:
 
       - name: Verify secrets
         run: |
-          for var in CDSE_CLIENT_ID CDSE_CLIENT_SECRET SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+          if [ -z "$CDSE_REFRESH_TOKEN" ] && [ -z "$CDSE_CLIENT_ID" ]; then
+            echo "::error::Set CDSE_REFRESH_TOKEN atau CDSE_CLIENT_ID+SECRET"
+            exit 1
+          fi
+          for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
             [ -n "${!var}" ] || { echo "::error::Missing $var"; exit 1; }
           done
 
