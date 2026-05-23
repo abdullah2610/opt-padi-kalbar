@@ -76,9 +76,9 @@ def build_composite(req: CompositeRequest) -> list[tuple[str, object]]:
     )
     cube = mask_clouds(cube)
     cube = cube.reduce_dimension(dimension="t", reducer="median")
-    # Downsample 10m → 60m sebelum save: file 1/36 (Ketapang ~70MB cocok ≤ Supabase 50MB-200MB),
-    # cukup viz zoom 6-12 dan stats kabupaten-level. Set RESOLUTION_M=20/30 utk akurasi lebih tinggi.
-    resolution_m = int(os.getenv("ETL_RESOLUTION_M", "60"))
+    # Downsample 10m → 100m sebelum save: file 1/100 (Ketapang ~25MB ≤ Supabase Free 50MB hard limit),
+    # cukup viz zoom 5-11 dan stats kabupaten-level. Set RESOLUTION_M=60 (Pro) / 20 (akurat) override.
+    resolution_m = int(os.getenv("ETL_RESOLUTION_M", "100"))
     if resolution_m > 10:
         cube = cube.resample_spatial(resolution=resolution_m, method="average")
 
