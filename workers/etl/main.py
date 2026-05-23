@@ -193,62 +193,177 @@ def batch_all(period: str, upload: bool, dry_run: bool) -> None:
         log.warning("  ✗ %s: %s", kid, msg[:200])
 
 
+def _doy_bucket(d: date) -> int:
+    """DOY bucket midpoint: 1-10 → 5, 11-20 → 15, ..., 361-366 → 365. Sync dengan SQL doy_bucket()."""
+    doy = d.timetuple().tm_yday
+    return ((doy - 1) // 10) * 10 + 5
+
+
 @cli.command()
 @click.option("--years", default="2021,2022,2023,2024,2025", help="5 tahun lengkap terbaru (default rolling)")
 @click.option("--kabupaten", default=None, help="single kabupaten or all if omitted")
-def baseline(years: str, kabupaten: str | None) -> None:
-    """Aggregate NDVI vegetation_indices → index_baselines per DOY."""
+@click.option("--indices", default="ndvi,ndwi,mndwi,ndmi,msi,evi", help="comma-separated indices")
+@click.option("--min-samples", default=2, type=int, help="minimum sampel per DOY bucket utk insert baseline")
+def baseline(years: str, kabupaten: str | None, indices: str, min_samples: int) -> None:
+    """Aggregate vegetation_indices → index_baselines per DOY bucket (10-day midpoint).
+
+    Prasyarat: vegetation_indices terisi untuk tahun-tahun target (jalankan `backfill` dulu).
+    Default semua 6 indeks. Output: index_baselines (kabupaten_id, index_name, doy, mean, std, sample_count).
+    """
     import numpy as np
     from kabupaten import KABUPATEN_IDS
     from storage import get_supabase_client
 
     year_list = [int(y.strip()) for y in years.split(",") if y.strip()]
+    index_list = [i.strip().lower() for i in indices.split(",") if i.strip()]
     targets = [kabupaten] if kabupaten else list(KABUPATEN_IDS)
     client = get_supabase_client()
     min_year, max_year = min(year_list), max(year_list)
 
-    log.info("baseline: years=%s kabupaten=%d", year_list, len(targets))
+    log.info("baseline: years=%s indices=%s kabupaten=%d min_samples=%d",
+             year_list, index_list, len(targets), min_samples)
 
+    grand_total = 0
     for kid in targets:
-        rows = (
-            client.table("vegetation_indices")
-            .select("observation_date, mean")
-            .eq("kabupaten_id", kid)
-            .eq("index_name", "ndvi")
-            .gte("observation_date", f"{min_year}-01-01")
-            .lte("observation_date", f"{max_year}-12-31")
-            .execute()
-            .data
-            or []
-        )
-        by_doy: dict[int, list[float]] = {}
-        for row in rows:
-            if row.get("mean") is None:
-                continue
-            y = int(row["observation_date"][:4])
-            if y not in year_list:
-                continue
-            d = date.fromisoformat(row["observation_date"])
-            by_doy.setdefault(d.timetuple().tm_yday, []).append(float(row["mean"]))
+        for idx in index_list:
+            rows = (
+                client.table("vegetation_indices")
+                .select("observation_date, mean")
+                .eq("kabupaten_id", kid)
+                .eq("index_name", idx)
+                .gte("observation_date", f"{min_year}-01-01")
+                .lte("observation_date", f"{max_year}-12-31")
+                .execute()
+                .data
+                or []
+            )
 
-        if not by_doy:
-            log.warning("no NDVI samples for %s — run ETL composites first", kid)
-            continue
+            by_bucket: dict[int, list[float]] = {}
+            for row in rows:
+                if row.get("mean") is None:
+                    continue
+                y = int(row["observation_date"][:4])
+                if y not in year_list:
+                    continue
+                d = date.fromisoformat(row["observation_date"])
+                by_bucket.setdefault(_doy_bucket(d), []).append(float(row["mean"]))
 
-        for doy, values in by_doy.items():
-            arr = np.array(values, dtype=np.float64)
-            client.table("index_baselines").upsert(
-                {
-                    "kabupaten_id": kid,
-                    "index_name": "ndvi",
-                    "doy": doy,
-                    "mean": float(arr.mean()),
-                    "std": float(arr.std()) if len(arr) > 1 else 0.01,
-                    "sample_count": len(arr),
-                },
-                on_conflict="kabupaten_id,index_name,doy",
-            ).execute()
-        log.info("baseline upserted %d DOY rows for %s", len(by_doy), kid)
+            if not by_bucket:
+                log.warning("  no %s samples for %s in %s..%s", idx, kid, min_year, max_year)
+                continue
+
+            inserted = 0
+            for doy_b, values in sorted(by_bucket.items()):
+                if len(values) < min_samples:
+                    continue
+                arr = np.array(values, dtype=np.float64)
+                client.table("index_baselines").upsert(
+                    {
+                        "kabupaten_id": kid,
+                        "index_name": idx,
+                        "doy": doy_b,
+                        "mean": float(arr.mean()),
+                        "std": float(arr.std(ddof=1)) if len(arr) > 1 else 0.05,
+                        "sample_count": len(arr),
+                    },
+                    on_conflict="kabupaten_id,index_name,doy",
+                ).execute()
+                inserted += 1
+            log.info("  %s %s → %d buckets (from %d rows)", kid, idx, inserted, len(rows))
+            grand_total += inserted
+
+    log.info("✓ baseline upserted %d total bucket rows", grand_total)
+
+
+@cli.command()
+@click.option("--years", required=True, help="comma-separated, e.g. 2021,2022,2023,2024,2025")
+@click.option("--kabupaten", default=None, help="single kab or all if omitted")
+@click.option("--window-days", default=30, type=int, help="composite window size (30=monthly, 10=dekadal)")
+@click.option("--start-month", default=1, type=int, help="bulan awal per tahun (1-12)")
+@click.option("--end-month", default=12, type=int, help="bulan akhir per tahun (1-12)")
+@click.option("--delay-sec", default=120, type=int, help="sleep antar composite (hindari quota CDSE)")
+@click.option("--dry-run", is_flag=True, help="hanya tampilkan plan, tidak submit")
+def backfill(years: str, kabupaten: str | None, window_days: int, start_month: int, end_month: int,
+             delay_sec: int, dry_run: bool) -> None:
+    """Submit historical composites untuk N tahun × kabupaten — populate vegetation_indices utk baseline.
+
+    Quota CDSE Free ~5 batch jobs/jam → 6 indices/composite × 12 windows/tahun = 72 jobs/kab/tahun
+    → ~15 jam per kab per tahun. Strategi: 1 kabupaten at a time, multi-day session.
+
+    Setelah backfill selesai, jalankan `baseline --years YEARS` untuk aggregate ke index_baselines.
+    """
+    from datetime import date, timedelta
+    from calendar import monthrange
+    from kabupaten import KABUPATEN_IDS
+
+    year_list = [int(y.strip()) for y in years.split(",") if y.strip()]
+    targets = [kabupaten] if kabupaten else list(KABUPATEN_IDS)
+
+    if kabupaten and kabupaten not in KABUPATEN_IDS:
+        raise click.ClickException(f"unknown kabupaten: {kabupaten}")
+
+    # Build composite window list per year — split month into chunks of window_days,
+    # merge sisa < 7 hari ke window sebelumnya (hindari sliver 1-day composite).
+    all_windows: list[tuple[str, str, str]] = []  # (kab_id, start, end)
+    for kid in targets:
+        for year in year_list:
+            for month in range(start_month, end_month + 1):
+                _, days_in_month = monthrange(year, month)
+                first = date(year, month, 1)
+                month_end = date(year, month, days_in_month)
+                month_wins: list[tuple[str, str]] = []
+                cur = first
+                while cur <= month_end:
+                    win_end = min(cur + timedelta(days=window_days - 1), month_end)
+                    month_wins.append((cur.isoformat(), win_end.isoformat()))
+                    cur = win_end + timedelta(days=1)
+                # Merge tail jika < 7 hari
+                if len(month_wins) >= 2:
+                    last_s, last_e = month_wins[-1]
+                    span = (date.fromisoformat(last_e) - date.fromisoformat(last_s)).days + 1
+                    if span < 7:
+                        prev_s, _ = month_wins[-2]
+                        month_wins = month_wins[:-2] + [(prev_s, last_e)]
+                for ws, we in month_wins:
+                    all_windows.append((kid, ws, we))
+
+    total = len(all_windows)
+    eta_hours = (total * 6) / 5  # 6 jobs/composite, 5 jobs/hour CDSE free
+    log.info("backfill plan: %d composites × 6 indices = %d batch jobs (~%.0f jam CDSE free quota)",
+             total, total * 6, eta_hours)
+    log.info("  years=%s kab=%d windows/kab/year=%d",
+             year_list, len(targets), total // (len(targets) * len(year_list)))
+
+    if dry_run:
+        for i, (kid, ws, we) in enumerate(all_windows[:10]):
+            log.info("  [%d] %s %s..%s", i + 1, kid, ws, we)
+        if total > 10:
+            log.info("  ... %d more windows", total - 10)
+        log.info("dry-run done. Re-run tanpa --dry-run untuk submit.")
+        return
+
+    if upload_required():
+        log.info("upload mode aktif — verifikasi Supabase env...")
+
+    failures: list[tuple[str, str, str, str]] = []
+    for i, (kid, ws, we) in enumerate(all_windows):
+        log.info("── [%d/%d] %s %s..%s", i + 1, total, kid, ws, we)
+        ctx = click.get_current_context()
+        try:
+            ctx.invoke(composite, kabupaten=kid, start=ws, end=we, upload=True, dry_run=False)
+        except Exception as exc:
+            log.exception("backfill %s %s..%s failed: %s", kid, ws, we, exc)
+            failures.append((kid, ws, we, str(exc)[:120]))
+        if i < total - 1:
+            time.sleep(delay_sec)
+
+    log.info("backfill done: ok=%d failed=%d", total - len(failures), len(failures))
+    for kid, ws, we, msg in failures:
+        log.warning("  ✗ %s %s..%s: %s", kid, ws, we, msg)
+
+
+def upload_required() -> bool:
+    return all(os.getenv(k) for k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"))
 
 
 @cli.command("train-yield")
