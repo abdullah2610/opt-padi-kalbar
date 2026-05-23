@@ -2,7 +2,7 @@
 
 Status pengerjaan aplikasi web mobile-first pemantauan padi 14 kab/kota Kalbar dgn Sentinel-2.
 
-**Tanggal update:** 2026-05-23 (sesi ke-3: ETL pertama sukses — Pontianak 2026-05-01..2026-05-10)
+**Tanggal update:** 2026-05-23 (sesi ke-4: deploy live — Vercel + Fly.io TiTiler + 13 kab ETL @100m background)
 **Plan asli:** `.claude/plans/streamed-imagining-thunder.md`
 **Arsitektur:** `ARCHITECTURE.md`
 
@@ -28,6 +28,25 @@ Status pengerjaan aplikasi web mobile-first pemantauan padi 14 kab/kota Kalbar d
   - Retry decorator: `retry_if_not_exception_type(KeyError, ClickException, ValueError)` — config error tidak retry (avoid burning CDSE quota)
   - Fail-fast `SUPABASE_URL`/`SERVICE_ROLE_KEY` validation sebelum submit batch jobs
 
+## Perubahan Sesi ke-4
+
+- **Code review fixes** (1 CRITICAL + 4 HIGH):
+  - `run_migrations.mjs`: wrap setiap migration di `sql.begin(tx => tx.unsafe(...))` (rollback on partial failure)
+  - `api/_lib/data.js`: `.limit(400)` di `fetchIndicesSeries`, `.limit(200)` di `fetchAlerts`
+  - `api/disease-risk.js`: `AbortSignal.timeout(5000)` di fetch Open-Meteo
+  - `workers/etl/main.py`: hapus `@retry` decorator (resubmit batch jobs burning quota); `batch_all` wrap per-kab `try/except` (1 kab gagal tidak abort 13 lain)
+- **ETL downsample 10m → 100m** (`resample_spatial(resolution=100, method='average')`):
+  - Pontianak ~107 km² @10m = 8.5 MB → fit. Sambas ~6716 km² @10m = ~530 MB / Ketapang ~31000 km² @10m = ~2.5 GB → over Supabase Free 50 MB hard limit.
+  - @100m: Ketapang ~25 MB, semua kab fit ≤ 50 MB.
+  - Override env `ETL_RESOLUTION_M=20` / `60` untuk akurasi lebih tinggi (perlu paid Supabase Storage).
+- **Vercel production deploy** — `opt-padi-kalbar.vercel.app`:
+  - Fix `vercel.json`: drop `api/tile/*.js` override (glob tidak match `[index].js` karena `[...]` = char class). Tile inherit dari `api/**/*.js` (30s, 1024 MB). Cache header via `headers.source` regex (kerja fine).
+  - Env production: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_STORAGE_BUCKET`, `TITILER_BASE_URL`.
+- **TiTiler Fly.io deploy** — `opt-padi-titiler.fly.dev` (region `sin`, shared-cpu-1x 512 MB, auto-stop free tier):
+  - `workers/titiler/Dockerfile`: drop `CMD` override (image official `ghcr.io/developmentseed/titiler:latest` sudah CMD uvicorn on `$PORT`). Set env GDAL untuk COG perf: `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR`, `CPL_VSIL_CURL_ALLOWED_EXTENSIONS=.tif`, `GDAL_CACHEMAX=512`.
+  - Verified: `/cog/info` Pontianak NDVI returns metadata 1247×1510 float32 EPSG:32749. `/cog/tiles/WebMercatorQuad/11/1645/1024.png?rescale=-0.2,0.9&colormap_name=rdylgn` render 256×256 RGBA 41 KB.
+- **Frontend → tile end-to-end** working via Vercel proxy `/api/tile/[index]?kabupaten=&date=&z=&x=&y=` → TiTiler `/cog/tiles/...` → COG Supabase Storage public. MapLibre layer NDVI/EVI/dst sekarang render asli (bukan transparent PNG placeholder).
+
 ---
 
 ## Ringkasan Status
@@ -36,15 +55,24 @@ Status pengerjaan aplikasi web mobile-first pemantauan padi 14 kab/kota Kalbar d
 |---|---|---|---|
 | 0 | Scaffold monorepo | ✅ Done | — |
 | 1 | GeoJSON kabupaten + DB migrations | ✅ 001-009 applied + 14 kabupaten seeded | — |
-| 2 | Python ETL openEO Sentinel-2 | ✅ Implemented + **first run Pontianak sukses** (96% clear, NDVI mean 0.506) | run 13 kab sisa |
-| 3 | TiTiler tile serving | ✅ Scaffold + proxy API | deploy Fly.io |
-| 4 | Analytics modules | ✅ API + SQL (fallback dummy) | butuh data ETL |
-| 5 | Vercel REST API endpoints | ✅ Done — **smoke 9/9 pass** | — |
+| 2 | Python ETL openEO Sentinel-2 | ✅ Pontianak @10m + 13 kab @100m running background | tunggu batch selesai (~3 jam) |
+| 3 | TiTiler tile serving | ✅ **Live di Fly.io** `opt-padi-titiler.fly.dev` (verified) | — |
+| 4 | Analytics modules | ✅ API + SQL + data Sentinel-2 real (Pontianak) | tambah data 13 kab |
+| 5 | Vercel REST API endpoints | ✅ **Live di opt-padi-kalbar.vercel.app** | — |
 | 6 | Mobile-first React frontend | ✅ Done MVP — typecheck + build hijau, PWA OK | polish opsional |
-| 7 | Deploy & observability | 🟡 Sentry wired (deps installed) | deploy Vercel manual |
+| 7 | Deploy & observability | ✅ Vercel + Fly.io live, Sentry wired | Sentry DSN opsional |
 | 8 | Auth multi-role | 🔒 Deferred Phase-2 | — |
 
-**Total sisa user-only:** CDSE OAuth + ETL run pertama, deploy TiTiler Fly.io, deploy Vercel production (~½–1 hari kerja).
+**Total sisa:**
+- 🟡 ETL 13 kab @100m background (otomatis selesai ~3 jam)
+- ⚪ Polish frontend / Sentry DSN (opsional)
+- ⚪ Baseline historical NDVI 5 tahun (~12 jam batch jobs CDSE — Phase analytics tinggi)
+- 🔒 Phase 8 Auth (deferred)
+
+**Live URLs:**
+- Frontend + API: https://opt-padi-kalbar.vercel.app
+- TiTiler: https://opt-padi-titiler.fly.dev
+- Supabase Postgres: `prrxzfmcgkwhrsuuiyox.supabase.co` (pooler `aws-1-ap-northeast-1`)
 
 ---
 
