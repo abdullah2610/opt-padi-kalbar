@@ -1,0 +1,112 @@
+name: Sentinel-2 ETL - Build Baseline
+
+on:
+  schedule:
+    - cron: '0 4 1 * *'   # 04:00 UTC tanggal 1 tiap bulan
+  workflow_dispatch:
+    inputs:
+      years:
+        description: 'Tahun comma-separated (default rolling 5 tahun terbaru)'
+        required: false
+        default: '2021,2022,2023,2024,2025'
+      kabupaten:
+        description: 'kabupaten id (kosong = semua 14)'
+        required: false
+        type: string
+      indices:
+        description: 'Indices comma-separated'
+        required: false
+        default: 'ndvi,ndwi,mndwi,ndmi,msi,evi'
+      min_samples:
+        description: 'Minimum sampel per DOY bucket'
+        required: false
+        default: '2'
+
+concurrency:
+  group: etl-baseline
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: workers/etl
+    env:
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      LOG_LEVEL:                 INFO
+      INPUT_YEARS:               ${{ inputs.years || '2021,2022,2023,2024,2025' }}
+      INPUT_KABUPATEN:           ${{ inputs.kabupaten }}
+      INPUT_INDICES:             ${{ inputs.indices || 'ndvi,ndwi,mndwi,ndmi,msi,evi' }}
+      INPUT_MIN_SAMPLES:         ${{ inputs.min_samples || '2' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: 'latest'
+          enable-cache: true
+      - run: uv python install 3.11
+      - run: uv sync --frozen || uv sync
+
+      - name: Validate inputs
+        run: |
+          set -e
+          case "$INPUT_YEARS" in
+            *[!0-9,]*) echo "Invalid years"; exit 1 ;;
+          esac
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            case "$INPUT_KABUPATEN" in
+              *[!a-z0-9-]*) echo "Invalid kabupaten"; exit 1 ;;
+            esac
+          fi
+          case "$INPUT_INDICES" in
+            *[!a-z,]*) echo "Invalid indices"; exit 1 ;;
+          esac
+          [[ "$INPUT_MIN_SAMPLES" =~ ^[0-9]+$ ]] || { echo "Invalid min_samples"; exit 1; }
+
+      - name: Verify secrets
+        run: |
+          for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            [ -n "${!var}" ] || { echo "::error::Missing $var"; exit 1; }
+          done
+
+      - name: Build baseline
+        run: |
+          ARGS=(
+            --years "$INPUT_YEARS"
+            --indices "$INPUT_INDICES"
+            --min-samples "$INPUT_MIN_SAMPLES"
+          )
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            ARGS+=(--kabupaten "$INPUT_KABUPATEN")
+          fi
+          uv run python main.py baseline "${ARGS[@]}"
+
+      - name: Verify baseline coverage
+        run: |
+          uv run python <<'PYEOF'
+          import os
+          from supabase import create_client
+          c = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_SERVICE_ROLE_KEY'])
+          r = c.table('baseline_summary').select('*').execute()
+          if not r.data:
+              print('::warning::baseline_summary kosong - backfill belum jalan?')
+          else:
+              for row in r.data: print(' ', row)
+          PYEOF
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "# Baseline Build Run"
+            echo "- **Years:** $INPUT_YEARS"
+            echo "- **Kab:** ${INPUT_KABUPATEN:-all 14}"
+            echo "- **Indices:** $INPUT_INDICES"
+            echo "- **Status:** ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

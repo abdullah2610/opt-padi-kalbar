@@ -1,4 +1,4 @@
-name: Sentinel-2 ETL
+name: Sentinel-2 ETL - Daily Composite
 
 on:
   schedule:
@@ -6,18 +6,29 @@ on:
   workflow_dispatch:
     inputs:
       kabupaten:
-        description: 'kabupaten id (kosongkan = semua 14)'
+        description: 'kabupaten id (kosong = semua 14)'
         required: false
         type: string
       period:
-        description: 'last-10d | YYYY-MM-DD:YYYY-MM-DD'
+        description: 'last-10d | last-30d | YYYY-MM-DD:YYYY-MM-DD'
         required: false
         default: 'last-10d'
+      resolution_m:
+        description: 'Resolusi output meter (default 100)'
+        required: false
+        default: '100'
+
+concurrency:
+  group: etl-composite
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   composite:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 350    # ~5.8 jam — 14 kab x 6 indeks x ~5 menit + delay
     defaults:
       run:
         working-directory: workers/etl
@@ -28,9 +39,11 @@ jobs:
       SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SUPABASE_STORAGE_BUCKET:   composites
+      ETL_RESOLUTION_M:          ${{ inputs.resolution_m || '100' }}
+      ETL_KAB_DELAY_SEC:         '180'
       LOG_LEVEL:                 INFO
       INPUT_KABUPATEN:           ${{ inputs.kabupaten }}
-      INPUT_PERIOD:              ${{ inputs.period }}
+      INPUT_PERIOD:              ${{ inputs.period || 'last-10d' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,26 +60,86 @@ jobs:
 
       - name: Validate inputs
         run: |
-          # whitelist kabupaten id (lowercase, hyphen only) and period format
+          set -e
+          # whitelist kabupaten id (lowercase, hyphen only)
           if [ -n "$INPUT_KABUPATEN" ]; then
             case "$INPUT_KABUPATEN" in
               ''|*[!a-z0-9-]*) echo "Invalid kabupaten id"; exit 1 ;;
             esac
           fi
-          case "${INPUT_PERIOD:-last-10d}" in
+          case "$INPUT_PERIOD" in
             last-10d|last-30d) ;;
             [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]:[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
-            *) echo "Invalid period"; exit 1 ;;
+            *) echo "Invalid period: $INPUT_PERIOD"; exit 1 ;;
           esac
+          if ! [[ "$ETL_RESOLUTION_M" =~ ^[0-9]+$ ]] || [ "$ETL_RESOLUTION_M" -lt 10 ] || [ "$ETL_RESOLUTION_M" -gt 500 ]; then
+            echo "Invalid resolution_m (10-500): $ETL_RESOLUTION_M"
+            exit 1
+          fi
+
+      - name: Verify secrets
+        run: |
+          set -e
+          for var in CDSE_CLIENT_ID CDSE_CLIENT_SECRET SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [ -z "${!var}" ]; then
+              echo "::error::Missing secret: $var (set via 'gh secret set $var')"
+              exit 1
+            fi
+          done
+
+      - name: Compute date window
+        id: dates
+        run: |
+          case "$INPUT_PERIOD" in
+            last-10d) START=$(date -u -d '10 days ago' +%F); END=$(date -u +%F) ;;
+            last-30d) START=$(date -u -d '30 days ago' +%F); END=$(date -u +%F) ;;
+            *) START="${INPUT_PERIOD%:*}"; END="${INPUT_PERIOD#*:}" ;;
+          esac
+          echo "start=$START" >> "$GITHUB_OUTPUT"
+          echo "end=$END" >> "$GITHUB_OUTPUT"
+          echo "Window: $START..$END resolution=${ETL_RESOLUTION_M}m"
 
       - name: Run ETL
+        env:
+          WINDOW_START: ${{ steps.dates.outputs.start }}
+          WINDOW_END:   ${{ steps.dates.outputs.end }}
         run: |
           if [ -n "$INPUT_KABUPATEN" ]; then
             uv run python main.py composite \
               --kabupaten "$INPUT_KABUPATEN" \
-              --start "$(date -u -d '10 days ago' +%F)" \
-              --end   "$(date -u +%F)" \
+              --start "$WINDOW_START" \
+              --end   "$WINDOW_END" \
               --upload
           else
-            uv run python main.py batch-all --period "${INPUT_PERIOD:-last-10d}" --upload
+            uv run python main.py batch-all --period "$INPUT_PERIOD" --upload
           fi
+
+      - name: Verify DB rows updated
+        if: success()
+        env:
+          WINDOW_START: ${{ steps.dates.outputs.start }}
+        run: |
+          uv run python <<'PYEOF'
+          import os
+          from supabase import create_client
+          c = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_SERVICE_ROLE_KEY'])
+          start = os.environ['WINDOW_START']
+          r = c.table('sentinel_composites').select('kabupaten_id,status,period_end').gte('period_end', start).order('period_end', desc=True).limit(20).execute()
+          print(f'recent composites: {len(r.data)}')
+          for row in r.data:
+              print(' ', row)
+          PYEOF
+
+      - name: Summary
+        if: always()
+        env:
+          WINDOW_START: ${{ steps.dates.outputs.start }}
+          WINDOW_END:   ${{ steps.dates.outputs.end }}
+        run: |
+          {
+            echo "# ETL Composite Run"
+            echo "- **Window:** $WINDOW_START..$WINDOW_END"
+            echo "- **Resolution:** ${ETL_RESOLUTION_M}m"
+            echo "- **Scope:** ${INPUT_KABUPATEN:-all 14 kab}"
+            echo "- **Trigger:** ${GITHUB_EVENT_NAME}"
+          } >> "$GITHUB_STEP_SUMMARY"

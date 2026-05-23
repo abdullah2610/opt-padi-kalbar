@@ -1,0 +1,134 @@
+name: Sentinel-2 ETL - Historical Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: 'Tahun comma-separated (e.g. 2025 atau 2021,2022,2023,2024,2025)'
+        required: true
+        default: '2025'
+      kabupaten:
+        description: 'kabupaten id (kosong = semua 14)'
+        required: false
+        type: string
+      window_days:
+        description: 'Composite window size (10 dekadal / 30 monthly)'
+        required: false
+        default: '30'
+      start_month:
+        description: 'Bulan awal per tahun (1-12)'
+        required: false
+        default: '4'
+      end_month:
+        description: 'Bulan akhir per tahun (1-12)'
+        required: false
+        default: '9'
+      resolution_m:
+        description: 'Resolusi output meter'
+        required: false
+        default: '100'
+      delay_sec:
+        description: 'Sleep antar composite (detik)'
+        required: false
+        default: '180'
+
+concurrency:
+  group: etl-backfill
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    defaults:
+      run:
+        working-directory: workers/etl
+    env:
+      CDSE_CLIENT_ID:            ${{ secrets.CDSE_CLIENT_ID }}
+      CDSE_CLIENT_SECRET:        ${{ secrets.CDSE_CLIENT_SECRET }}
+      CDSE_OPENEO_URL:           https://openeo.dataspace.copernicus.eu
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_STORAGE_BUCKET:   composites
+      ETL_RESOLUTION_M:          ${{ inputs.resolution_m }}
+      LOG_LEVEL:                 INFO
+      INPUT_YEARS:               ${{ inputs.years }}
+      INPUT_KABUPATEN:           ${{ inputs.kabupaten }}
+      INPUT_WINDOW_DAYS:         ${{ inputs.window_days }}
+      INPUT_START_MONTH:         ${{ inputs.start_month }}
+      INPUT_END_MONTH:           ${{ inputs.end_month }}
+      INPUT_DELAY_SEC:           ${{ inputs.delay_sec }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: 'latest'
+          enable-cache: true
+
+      - run: uv python install 3.11
+      - run: uv sync --frozen || uv sync
+
+      - name: Validate inputs
+        run: |
+          set -e
+          case "$INPUT_YEARS" in
+            *[!0-9,]*) echo "Invalid years (digits + comma only)"; exit 1 ;;
+          esac
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            case "$INPUT_KABUPATEN" in
+              *[!a-z0-9-]*) echo "Invalid kabupaten id"; exit 1 ;;
+            esac
+          fi
+          for v in INPUT_WINDOW_DAYS INPUT_START_MONTH INPUT_END_MONTH INPUT_DELAY_SEC; do
+            val="${!v}"
+            [[ "$val" =~ ^[0-9]+$ ]] || { echo "Invalid $v: $val"; exit 1; }
+          done
+
+      - name: Verify secrets
+        run: |
+          for var in CDSE_CLIENT_ID CDSE_CLIENT_SECRET SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            [ -n "${!var}" ] || { echo "::error::Missing $var"; exit 1; }
+          done
+
+      - name: Dry-run plan
+        run: |
+          ARGS=(
+            --years "$INPUT_YEARS"
+            --window-days "$INPUT_WINDOW_DAYS"
+            --start-month "$INPUT_START_MONTH"
+            --end-month "$INPUT_END_MONTH"
+          )
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            ARGS+=(--kabupaten "$INPUT_KABUPATEN")
+          fi
+          uv run python main.py backfill "${ARGS[@]}" --dry-run
+
+      - name: Run backfill
+        run: |
+          ARGS=(
+            --years "$INPUT_YEARS"
+            --window-days "$INPUT_WINDOW_DAYS"
+            --start-month "$INPUT_START_MONTH"
+            --end-month "$INPUT_END_MONTH"
+            --delay-sec "$INPUT_DELAY_SEC"
+          )
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            ARGS+=(--kabupaten "$INPUT_KABUPATEN")
+          fi
+          uv run python main.py backfill "${ARGS[@]}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "# ETL Backfill Run"
+            echo "- **Years:** $INPUT_YEARS"
+            echo "- **Kabupaten:** ${INPUT_KABUPATEN:-all 14}"
+            echo "- **Window:** $INPUT_WINDOW_DAYS hari x bulan $INPUT_START_MONTH-$INPUT_END_MONTH"
+            echo "- **Resolution:** ${ETL_RESOLUTION_M}m"
+            echo "- **Status:** ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
