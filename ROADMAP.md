@@ -7,10 +7,11 @@ Saran fitur + peningkatan pasca-MVP. Prioritas berdasar dampak × effort. Update
 ## 🔥 High Impact
 
 ### 1. Baseline historical NDVI 5 tahun (Phase 2 finish)
-- `python main.py baseline --years 2019,2020,2021,2022,2023`
+- `python main.py baseline --years 2021,2022,2023,2024,2025` (5 tahun lengkap terbaru)
 - Aktifkan z-score anomaly + alert otomatis (`detect_stress` RPC sudah ada)
 - ETA ~12 jam batch jobs CDSE, sekali jalan
 - **Impact:** alert stress otomatis jadi akurat (saat ini baseline kosong → z-score NULL)
+- Rolling: update tiap tahun (drop tahun terlama, tambah tahun terbaru) untuk recency
 
 ### 2. Phase 8 Auth + role
 - Supabase Auth (email magic link + Google OAuth)

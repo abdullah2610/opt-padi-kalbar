@@ -194,7 +194,7 @@ def batch_all(period: str, upload: bool, dry_run: bool) -> None:
 
 
 @cli.command()
-@click.option("--years", default="2019,2020,2021,2022,2023")
+@click.option("--years", default="2021,2022,2023,2024,2025", help="5 tahun lengkap terbaru (default rolling)")
 @click.option("--kabupaten", default=None, help="single kabupaten or all if omitted")
 def baseline(years: str, kabupaten: str | None) -> None:
     """Aggregate NDVI vegetation_indices → index_baselines per DOY."""

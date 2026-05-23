@@ -249,7 +249,9 @@ function Indeks() {
       <H2>Anomali Z-score</H2>
       <P>
         Setiap composite dibandingkan dengan <strong>baseline historical</strong> (mean ± std NDVI per Day-of-Year
-        dari tahun 2019–2023). <strong>Z-score &lt; −1.5</strong> dua composite berturut-turut → alert <em>stress</em> otomatis.
+        dari 5 tahun lengkap terbaru: <strong>2021–2025</strong>). <strong>Z-score &lt; −1.5</strong> dua composite
+        berturut-turut → alert <em>stress</em> otomatis. Baseline rolling: di-update tiap tahun (drop tahun terlama,
+        tambah tahun terbaru).
       </P>
       <Note>
         <strong>Baseline 2019-2023 belum di-build.</strong> Z-score sementara NULL atau bias. Sedang dalam
