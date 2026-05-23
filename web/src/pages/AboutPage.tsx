@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+
 export default function AboutPage() {
   return (
     <div className="h-full overflow-auto bg-slate-900 p-6">
@@ -13,7 +15,15 @@ export default function AboutPage() {
           Data cuaca dari <a href="https://open-meteo.com" className="text-padi-400 underline">Open-Meteo</a>.
           Batas kabupaten dari OpenStreetMap & BPS.
         </p>
-        <p className="text-xs text-slate-500">Versi 0.1.0 — MVP, public read-only.</p>
+        <p>
+          <Link to="/panduan" className="inline-block rounded bg-padi-700 px-4 py-2 text-white hover:bg-padi-600">
+            📖 Buka Panduan Penggunaan
+          </Link>
+        </p>
+        <p className="text-xs text-slate-500">
+          Versi 0.1.0 — MVP, public read-only.<br />
+          Cakupan: hanya 14 kab/kota Kalimantan Barat. Resolusi 100m/pixel. Composite per 10-hari.
+        </p>
       </div>
     </div>
   );

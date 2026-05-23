@@ -3,6 +3,7 @@ import MapPage from './pages/MapPage';
 import DashboardPage from './pages/DashboardPage';
 import AlertsPage from './pages/AlertsPage';
 import AboutPage from './pages/AboutPage';
+import HelpPage from './pages/HelpPage';
 import AppShell from './components/AppShell';
 
 export default function App() {
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/dashboard/:kabupatenId" element={<DashboardPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/panduan" element={<HelpPage />} />
         <Route path="/tentang" element={<AboutPage />} />
         <Route path="*" element={<Navigate to="/peta" replace />} />
       </Routes>

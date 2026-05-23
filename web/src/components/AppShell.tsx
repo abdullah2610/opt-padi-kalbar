@@ -10,6 +10,7 @@ const navItems = [
   { to: '/peta', label: 'Peta', icon: '🗺️' },
   { to: '/dashboard', label: 'Dasbor', icon: '📊' },
   { to: '/alerts', label: 'Peringatan', icon: '⚠️' },
+  { to: '/panduan', label: 'Panduan', icon: '📖' },
   { to: '/tentang', label: 'Tentang', icon: 'ℹ️' }
 ];
 
