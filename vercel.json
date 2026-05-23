@@ -9,7 +9,7 @@
       "maxDuration": 30,
       "memory": 1024
     },
-    "api/tile/**/*.js": {
+    "api/tile/*.js": {
       "maxDuration": 15,
       "memory": 512
     }
