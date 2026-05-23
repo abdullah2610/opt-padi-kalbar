@@ -1,1 +1,23 @@
 .vercel
+node_modules
+.env
+.env.local
+.env.*.local
+dist
+*.log
+.DS_Store
+
+# Python ETL
+workers/etl/.venv
+workers/etl/__pycache__
+workers/etl/**/__pycache__
+workers/etl/*.egg-info
+workers/etl/.pytest_cache
+workers/etl/.cache
+workers/etl/data/
+workers/etl/output/
+
+# IDE
+.idea
+.vscode
+*.swp

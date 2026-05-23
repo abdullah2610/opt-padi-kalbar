@@ -1,0 +1,72 @@
+name: Sentinel-2 ETL
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 02:00 UTC daily (09:00 WIB)
+  workflow_dispatch:
+    inputs:
+      kabupaten:
+        description: 'kabupaten id (kosongkan = semua 14)'
+        required: false
+        type: string
+      period:
+        description: 'last-10d | YYYY-MM-DD:YYYY-MM-DD'
+        required: false
+        default: 'last-10d'
+
+jobs:
+  composite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: workers/etl
+    env:
+      CDSE_CLIENT_ID:            ${{ secrets.CDSE_CLIENT_ID }}
+      CDSE_CLIENT_SECRET:        ${{ secrets.CDSE_CLIENT_SECRET }}
+      CDSE_OPENEO_URL:           https://openeo.dataspace.copernicus.eu
+      SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_STORAGE_BUCKET:   composites
+      LOG_LEVEL:                 INFO
+      INPUT_KABUPATEN:           ${{ inputs.kabupaten }}
+      INPUT_PERIOD:              ${{ inputs.period }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: 'latest'
+          enable-cache: true
+
+      - name: Install Python 3.11
+        run: uv python install 3.11
+
+      - name: Install deps
+        run: uv sync --frozen || uv sync
+
+      - name: Validate inputs
+        run: |
+          # whitelist kabupaten id (lowercase, hyphen only) and period format
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            case "$INPUT_KABUPATEN" in
+              ''|*[!a-z0-9-]*) echo "Invalid kabupaten id"; exit 1 ;;
+            esac
+          fi
+          case "${INPUT_PERIOD:-last-10d}" in
+            last-10d|last-30d) ;;
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]:[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+            *) echo "Invalid period"; exit 1 ;;
+          esac
+
+      - name: Run ETL
+        run: |
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            uv run python main.py composite \
+              --kabupaten "$INPUT_KABUPATEN" \
+              --start "$(date -u -d '10 days ago' +%F)" \
+              --end   "$(date -u +%F)" \
+              --upload
+          else
+            uv run python main.py batch-all --period "${INPUT_PERIOD:-last-10d}" --upload
+          fi

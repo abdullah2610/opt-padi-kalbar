@@ -1,6 +1,35 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm build:web",
+  "outputDirectory": "web/dist",
+  "installCommand": "pnpm install --frozen-lockfile=false",
+  "framework": null,
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 30,
+      "memory": 1024
+    },
+    "api/tile/**/*.js": {
+      "maxDuration": 15,
+      "memory": 512
+    }
+  },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)",    "destination": "/public/$1" }
-  ]
+    { "source": "/api/(.*)", "destination": "/api/$1" }
+  ],
+  "headers": [
+    {
+      "source": "/api/tile/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, s-maxage=86400, stale-while-revalidate=43200, immutable" }
+      ]
+    },
+    {
+      "source": "/api/kabupaten",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, s-maxage=86400, stale-while-revalidate=3600" }
+      ]
+    }
+  ],
+  "crons": []
 }

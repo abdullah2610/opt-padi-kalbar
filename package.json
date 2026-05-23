@@ -1,6 +1,29 @@
 {
   "name": "opt-padi-kalbar",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
-  "engines": { "node": ">=18" }
+  "type": "module",
+  "description": "Mobile-first web app pemantauan kesehatan padi 14 kabupaten/kota Kalimantan Barat menggunakan Sentinel-2 (CDSE openEO).",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:web": "cd web && pnpm dev",
+    "build:web": "cd web && pnpm install --frozen-lockfile=false && pnpm build",
+    "build": "pnpm build:web",
+    "lint:web": "cd web && pnpm lint",
+    "typecheck:web": "cd web && pnpm typecheck",
+    "vercel:dev": "vercel dev",
+    "migrate": "node infra/scripts/run_migrations.mjs",
+    "migrate:pooler": "node infra/scripts/run_migrations.mjs --pooler",
+    "probe:region": "node infra/scripts/probe_pooler_region.mjs",
+    "migrate:009": "node infra/scripts/run_migrations.mjs --only 009",
+    "smoke": "node infra/scripts/smoke_api.mjs",
+    "seed:kab": "node infra/scripts/seed_kabupaten_pg.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "postgres": "^3.4.5",
+    "zod": "^3.23.8"
+  }
 }
