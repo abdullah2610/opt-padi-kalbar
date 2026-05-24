@@ -47,6 +47,7 @@ jobs:
       run:
         working-directory: workers/etl
     env:
+      CDSE_REFRESH_TOKEN:        ${{ secrets.CDSE_REFRESH_TOKEN }}
       CDSE_CLIENT_ID:            ${{ secrets.CDSE_CLIENT_ID }}
       CDSE_CLIENT_SECRET:        ${{ secrets.CDSE_CLIENT_SECRET }}
       CDSE_OPENEO_URL:           https://openeo.dataspace.copernicus.eu
