@@ -1,22 +1,42 @@
 # Implementation Plan: Option B — ESA WorldCover Cropland Mask
 
-Versi: 1.0 — 2026-05-25 (draft, butuh konfirmasi user sebelum eksekusi)
+Versi: 1.1 — 2026-05-25 (CONFIRMED — siap eksekusi setelah Pontianak backfill selesai)
+
+## Keputusan Final (dari konfirmasi user)
+
+| # | Pertanyaan | Pilihan | Detail |
+|---|---|---|---|
+| Q1 | Suffix `_crop` atau kolom `mask_kind`? | **Suffix `_crop`** | Plus: **UI hanya display cropland values**. All-land tetap dihitung sebagai backup data di DB, tidak dirender di frontend. Tidak ada toggle "Semua lahan / Sawah saja". |
+| Q2 | Recompute sekarang atau tunggu Pontianak backfill? | **Tunggu Pontianak backfill selesai** | Hindari kuota CDSE bentrok |
+| Q3 | Dual-save (1 batch job → 2 output) atau 2 batch terpisah? | **Dual-save** | Target hemat kuota; Phase 0 spike validasi |
+| Q4 | WorldCover load CDSE tiap run atau static asset Supabase? | **Static asset** | Download 1x, clip per-kabupaten (14 file ~5MB each), reupload Supabase Storage `assets/worldcover/{kab}.tif` |
+
+**Implikasi konsolidasi:**
+- Frontend `LayerSwitcher` tidak butuh toggle mask (Step 17 simplified)
+- Frontend store tidak butuh `maskKind` state (Step 16 dropped)
+- API default `?mask=cropland` (bukan `all`)
+- Raw all-land data tetap exists di DB sebagai data backup/comparison untuk debug & analytics future
+- ETL load WorldCover via Supabase Storage URL (bukan openEO collection) — Phase 0 spike fokus validate clip + upload workflow, bukan CDSE collection discovery
 
 ## Overview
 
-Integrasi ESA WorldCover 10m 2021 v200 (class 40 = cropland) sebagai mask tambahan ke pipeline Sentinel-2 ETL. Tujuan: hitung statistik indeks vegetasi (NDVI/NDWI/MNDWI/NDMI/MSI/EVI) **hanya pada pixel cropland** (sawah + tanaman semusim), menghindari kontaminasi hutan/perkebunan/pemukiman dalam agregat per-kabupaten.
+Integrasi ESA WorldCover 10m 2021 v200 (class 40 = cropland) sebagai mask ke pipeline Sentinel-2 ETL. Tujuan: hitung statistik indeks vegetasi (NDVI/NDWI/MNDWI/NDMI/MSI/EVI) **hanya pada pixel cropland** (sawah + tanaman semusim).
 
-Strategi: **side-by-side** — index lama (`ndvi`) tetap dipertahankan, indeks baru disimpan dengan suffix `_crop` (`ndvi_crop`, `ndwi_crop`, dst), sehingga 18 composites + 108 indices rows existing tidak perlu di-rewrite dan UI bisa toggle "All land" vs "Cropland-only".
+Strategi: **dual-save backend, display cropland-only frontend** — backend simpan dua versi (raw + masked) via 1 batch job dual-output untuk hemat kuota CDSE; row DB pakai suffix `_crop` (`ndvi_crop`, dst); frontend cuma render values cropland (`ndvi_crop`) — raw `ndvi` tetap exists sebagai data backup/comparison untuk debug & analytics future tapi tidak displayed.
+
+WorldCover di-fetch sekali sebagai static asset, di-clip per-kabupaten, di-reupload ke Supabase Storage `assets/worldcover/{kab}.tif`, lalu ETL load mask dari Supabase (bukan CDSE openEO collection).
 
 ## Requirements
 
 - Mask non-cropland pixels (class != 40) sebelum reduce stats
-- Pakai WorldCover 10m via openEO CDSE collection `ESA_WORLDCOVER_10M_2021_V200`
-- Sejajarkan grid: WorldCover 10m → resample ke 100m (mode/majority untuk kategorikal)
-- Tetap simpan agregat all-land sebagai metric utama (backwards compat)
-- Tambah agregat cropland-only sebagai metric kedua per index
-- Tidak mengganggu backfill historical Pontianak yang sedang berjalan
-- Hemat kuota CDSE (≤5 batch jobs/jam target — bundle WorldCover ke cube yang sama jika memungkinkan)
+- WorldCover 10m → static asset di Supabase Storage (1x download awal), clip per-kabupaten, resample 100m (mode/majority)
+- ETL load mask dari Supabase URL public via openEO `load_url` atau rasterio sisi worker
+- Dual-save dalam 1 batch job: simpan raw `{idx}.tif` + masked `{idx}_crop.tif`
+- DB row pakai suffix `_crop` untuk masked stats
+- Frontend cuma render `_crop` values — raw tetap di DB sebagai backup
+- Tidak ada toggle UI (drop LayerSwitcher mask segment)
+- Tunggu backfill historical Pontianak selesai sebelum recompute crop (hindari kuota bentrok)
+- Hemat kuota CDSE (≤5 batch jobs/jam target)
 - Populate tabel `landcover` (yang ada tapi kosong) sebagai by-product
 
 ## Architecture Changes
@@ -25,12 +45,12 @@ Strategi: **side-by-side** — index lama (`ndvi`) tetap dipertahankan, indeks b
 
 | File | Action |
 |---|---|
-| `worldcover.py` | **NEW** — load WorldCover collection, resample ke grid target, return DataCube mask |
-| `mask_cropland.py` | **NEW** — apply cropland mask ke S2 cube + helper dual-stats |
-| `openeo_pipeline.py` | **MODIFY** — branch dual: per-index cube + masked variant, atau merge dalam 1 cube + simpan 2 GTiff |
-| `stats.py` | **MODIFY** — `compute_index_stats` tambah parameter `mask_path` untuk recompute (backup); tambah `MIN_VALID_PIXELS` guard |
-| `storage.py` | **MODIFY** — adapt naming `{idx}_crop.tif`, insert dual rows ke `vegetation_indices`, populate `landcover` |
-| `indices.py` | **MODIFY** — extend `INDEX_RENDERING` untuk variants `_crop` |
+| `worldcover.py` | **NEW** — load mask GeoTIFF dari Supabase URL public, return DataCube boolean mask (`class == 40`) di grid 100m |
+| `mask_cropland.py` | **NEW** — `apply_cropland(cube, mask)` + helper `compute_cropland_area_ha(mask_path)` |
+| `openeo_pipeline.py` | **MODIFY** — branch dual-save: per-index simpan raw + masked via `merge_cubes` atau dual `save_result` chain |
+| `stats.py` | **MODIFY** — `compute_index_stats` tambah `MIN_VALID_PIXELS` guard (default 1000); fallback recompute dari raster yang di-mask di sisi worker kalau dual-save openEO tidak supported |
+| `storage.py` | **MODIFY** — upload 2 GTiff `{idx}.tif` + `{idx}_crop.tif`, insert dual rows ke `vegetation_indices`, populate `landcover` |
+| `indices.py` | **MODIFY** — extend `INDEX_RENDERING` untuk variants `_crop` (sama rescale, beda metadata) |
 
 ### Schema (`infra/migrations/`)
 
@@ -61,72 +81,77 @@ ALTER TABLE index_baselines ADD CONSTRAINT index_baselines_index_name_check
 
 | File | Action |
 |---|---|
-| `_lib/validate.js` | Extend `indexNameSchema` untuk 12 nama |
-| `indices.js` | Accept `?mask=all|cropland`, map ke index_name suffix |
-| `composite-meta.js` | Return both `cog_paths.ndvi` & `cog_paths.ndvi_crop` + cropland_area_ha |
-| `_lib/data.js` | `fetchIndicesSeries` filter `index_name` per mask param |
+| `_lib/validate.js` | Extend `indexNameSchema` untuk 12 nama (backend tetap support kedua varian untuk future flexibility / debug) |
+| `indices.js` | Default behavior: return `_crop` rows. Tambah `?raw=true` opsional untuk debug akses all-land |
+| `composite-meta.js` | Return `cog_paths.{idx}_crop` (default) + `cog_paths.{idx}` (raw, hidden field) + cropland_area_ha |
+| `_lib/data.js` | `fetchIndicesSeries(kab, index)` otomatis filter ke `${index}_crop` rows |
 
 ### Frontend (`web/src/`)
 
 | File | Action |
 |---|---|
-| `lib/types.ts` | Tambah `MaskKind = 'all' \| 'cropland'` |
-| `store/mapStore.ts` | Tambah `maskKind` state + setter |
-| `components/LayerSwitcher.tsx` | Toggle segmented control "Semua lahan / Sawah saja" |
-| `components/IndexTimeseries.tsx` | Caption mask kind aktif |
-| `components/InfoTooltip.tsx` | Copy update sumber WorldCover 2021 + class 40 |
-| `hooks/useApi.ts` | Pass `mask` param ke fetch |
-| `pages/HelpPage.tsx` | Section baru "Apa beda NDVI All-Land vs Cropland?" |
-| `components/MapView.tsx` | Ganti tile URL `_crop` saat maskKind='cropland' |
+| `lib/types.ts` | Tambah `INDEX_NAMES_CROP` (suffix automatic) — frontend tetap pakai nama base (`ndvi`), API layer yang convert |
+| `store/mapStore.ts` | Tidak berubah (no maskKind state) |
+| `components/LayerSwitcher.tsx` | Tidak berubah (no mask toggle) — tetap 6 indeks button |
+| `components/IndexTimeseries.tsx` | Caption update: subtitle "Cropland-only (sawah + tanaman semusim)" |
+| `components/InfoTooltip.tsx` | Copy update sumber WorldCover 2021 + class 40 + cara baca cropland |
+| `hooks/useApi.ts` | Tidak ada perubahan signature — backend yang handle suffix |
+| `pages/HelpPage.tsx` | Section "Apa itu cropland mask?" + jelaskan cara data dihitung post-mask |
+| `components/MapView.tsx` | Tile URL otomatis pakai `{idx}_crop.tif` path |
 
 ## Implementation Phases
 
-### Phase 0 — Spike & Validation (0.5 dev-day, BLOCKING)
+### Phase 0 — Static Asset Setup + Dual-Save Validation (1 dev-day, BLOCKING)
 
 | # | Step | File | Risk | Output |
 |---|---|---|---|---|
-| 1 | Spike WorldCover collection availability | `workers/etl/spike_worldcover.py` (throwaway) | HIGH (collection ID validation) | Catat `WORLDCOVER_COLLECTION_ID`, verify class 40 |
-| 2 | Verify mask alignment overlay | `workers/etl/spike_alignment.py` (throwaway) | MEDIUM (CRS offset) | Confirm `resample_spatial(method="mode")` works untuk categorical |
+| 1 | Download WorldCover 2021 untuk extent Kalbar | `infra/scripts/fetch_worldcover.mjs` (new) — fetch via Terrascope STAC / Zenodo (1 file 2.4°×4.8° ~50MB GeoTIFF) | LOW (sumber stabil) | `infra/data/worldcover_kalbar.tif` |
+| 2 | Clip per-kabupaten + resample 100m mode | `infra/scripts/clip_worldcover.py` (new) — rasterio per kab boundary, output 14 file ~3-5MB each | LOW | `infra/data/worldcover/{kab}.tif` (14 file) |
+| 3 | Upload ke Supabase Storage bucket baru `assets/worldcover/` | `infra/scripts/upload_worldcover.mjs` (new) | LOW | URL public per kab |
+| 4 | Spike dual-save openEO API support | `workers/etl/spike_dualsave.py` (throwaway) — test `merge_cubes` + multi-output `save_result` | HIGH | Confirm whether dual-save feasible atau fallback Plan B (single-save cropland-only) |
+| 5 | Verify mask alignment overlay | `workers/etl/spike_alignment.py` (throwaway) — overlay clipped WorldCover + NDVI 100m existing Pontianak | MEDIUM | Confirm grid match exact, no 1-pixel shift |
 
-**Blocker risk:** kalau collection tidak ada di CDSE → fallback: Terrascope STAC, AWS S3 public bucket, atau static download + reupload Supabase Storage as `assets/worldcover_kalbar.tif`.
+**Blocker risk Step 4:** kalau dual-save tidak supported → fallback ke single-save `_crop` only mode (set `ETL_DUAL_SAVE=false`). Raw NDVI tidak ter-update di future ETL runs; pakai snapshot existing 108 rows untuk reference saja.
 
 ### Phase 1 — ETL Core Integration (2.5 dev-day)
 
 | # | Step | File | Risk |
 |---|---|---|---|
-| 3 | Create WorldCover loader (`load_cropland_mask`) | `workers/etl/worldcover.py` | MEDIUM (categorical resample) |
-| 4 | Cropland masking helper (`apply_cropland`, `compute_cropland_area_ha`) | `workers/etl/mask_cropland.py` | LOW |
-| 5 | Extend `build_composite` — dual save dari 1 cube (6 jobs total, 2 output each) | `workers/etl/openeo_pipeline.py` | HIGH (dual-save research) |
-| 6 | Schema migration 011 | `infra/migrations/011_cropland_mask.sql` | LOW (additive) |
-| 7 | Update `storage.insert_composite_row` untuk 12 keys | `workers/etl/storage.py` | MEDIUM |
-| 8 | `MIN_VALID_PIXELS` guard di stats | `workers/etl/stats.py` | LOW |
+| 6 | Create WorldCover loader (`load_cropland_mask`) — fetch dari Supabase Storage URL via openEO `load_url` atau rasterio | `workers/etl/worldcover.py` | MEDIUM |
+| 7 | Cropland masking helper (`apply_cropland`, `compute_cropland_area_ha`) | `workers/etl/mask_cropland.py` | LOW |
+| 8 | Extend `build_composite` — dual-save dari 1 cube (6 jobs total, 2 output each) | `workers/etl/openeo_pipeline.py` | HIGH (Phase 0 Step 4 dependent) |
+| 9 | Schema migration 011 | `infra/migrations/011_cropland_mask.sql` | LOW (additive) |
+| 10 | Update `storage.insert_composite_row` untuk 12 keys | `workers/etl/storage.py` | MEDIUM |
+| 11 | `MIN_VALID_PIXELS` guard di stats | `workers/etl/stats.py` | LOW |
 
-**Mitigation Step 5:** kalau dual-save dari 1 cube tidak supported openEO, fallback ke 2 batch jobs per index (12 total = lewat kuota free), atau env `ETL_CROPLAND_ONLY=true` untuk eksklusif masked saja.
+**Mitigation Step 8:** kalau dual-save tidak supported (hasil Phase 0 Step 4), fallback: `ETL_DUAL_SAVE=false` mode — submit 6 batch jobs single-output cropland only. Raw NDVI tidak ter-update di run baru (existing snapshot tetap intact di DB).
 
 ### Phase 2 — Backfill & Baseline Recompute (0.5 dev-day code + 1-2 minggu wallclock CDSE)
 
-| # | Step | File | Risk |
-|---|---|---|---|
-| 9 | Smoke test 1 kab 1 window | manual `workflow_dispatch` | MEDIUM |
-| 10 | Recompute historical 18 composites (skip raw, build _crop only) | `workers/etl/main.py` add `recompute-crop` command | HIGH (kuota) |
-| 11 | Baseline recompute untuk `_crop` indices | `.github/workflows/baseline.yml` extend | HIGH (jangan ganggu Pontianak backfill yang sedang jalan) |
-
-**Mitigation Step 11:** tambah `--skip-crop` flag ke backfill workflow agar Pontianak per-year compute raw only. Phase 3 kerjakan crop terpisah setelah backfill done.
-
-### Phase 3 — API & Frontend Toggle (2 dev-day, paralel P2)
+**TUNGGU sampai Pontianak per-year backfill selesai (task `bzidgs1jv` complete).** Konfirmasi via `gh run list --workflow=backfill.yml` semua success sebelum lanjut.
 
 | # | Step | File | Risk |
 |---|---|---|---|
-| 12 | API validation extend 12 nama | `api/_lib/validate.js` | LOW |
-| 13 | `indices.js` mask param + cache key | `api/indices.js` | LOW |
-| 14 | `composite-meta.js` crop paths | `api/composite-meta.js` | LOW |
-| 15 | Frontend types `MaskKind` | `web/src/lib/types.ts` | LOW |
-| 16 | Store maskKind + setter | `web/src/store/mapStore.ts` | LOW |
-| 17 | LayerSwitcher segmented control | `web/src/components/LayerSwitcher.tsx` | LOW |
-| 18 | IndexTimeseries caption | `web/src/components/IndexTimeseries.tsx` | LOW |
-| 19 | useApi pass mask | `web/src/hooks/useApi.ts` | LOW |
-| 20 | InfoTooltip + HelpPage copy update | `web/src/components/InfoTooltip.tsx`, `web/src/pages/HelpPage.tsx` | LOW |
-| 21 | MapView tile URL switch | `web/src/components/MapView.tsx` | MEDIUM (TiTiler path resolution) |
+| 12 | Smoke test 1 kab 1 window dual-save | manual `workflow_dispatch` | MEDIUM |
+| 13 | Recompute existing composites — build `_crop` variants saja (skip raw karena sudah ada) | `workers/etl/main.py` add `recompute-crop` command | HIGH (kuota CDSE 108 jobs) |
+| 14 | Baseline recompute untuk 6 `_crop` indices | `.github/workflows/baseline.yml` extend | LOW (cuma agregasi SQL, tidak panggil CDSE) |
+
+**Mitigation Step 13:** workflow `recompute-crop.yml` throttled 5 windows/6 jam (4-day total untuk 18 windows). Atau eksekusi local background jika user prefer.
+
+### Phase 3 — API & Frontend Cropland-Default (1 dev-day, paralel P2)
+
+| # | Step | File | Risk |
+|---|---|---|---|
+| 15 | API validation extend 12 nama (backend support kedua untuk debug) | `api/_lib/validate.js` | LOW |
+| 16 | `indices.js` default ke `_crop` rows | `api/indices.js` | LOW |
+| 17 | `composite-meta.js` return `_crop` paths default | `api/composite-meta.js` | LOW |
+| 18 | `_lib/data.js` `fetchIndicesSeries` auto-append `_crop` suffix | `api/_lib/data.js` | LOW |
+| 19 | IndexTimeseries subtitle "Cropland-only (sawah + tanaman semusim)" | `web/src/components/IndexTimeseries.tsx` | LOW |
+| 20 | InfoTooltip + HelpPage copy update — jelaskan source WorldCover + cara baca | `web/src/components/InfoTooltip.tsx`, `web/src/pages/HelpPage.tsx` | LOW |
+| 21 | MapView tile URL pakai `{idx}_crop.tif` default | `web/src/components/MapView.tsx` | MEDIUM (TiTiler path) |
+| 22 | KabupatenSheet + DashboardPage caption + cropland_area_ha tampilan opsional | `web/src/components/KabupatenSheet.tsx`, `pages/DashboardPage.tsx` | LOW |
+
+**Tidak ada perubahan:** `LayerSwitcher.tsx`, `store/mapStore.ts`, `hooks/useApi.ts` signature, `lib/types.ts` (cuma docs).
 
 ### Phase 4 — Monitoring & Cleanup (0.5 dev-day)
 
@@ -140,17 +165,19 @@ ALTER TABLE index_baselines ADD CONSTRAINT index_baselines_index_name_check
 
 | Aspect | Decision | Reasoning |
 |---|---|---|
-| Existing 6 indices rows | **Keep as-is** (all-land) | 18 composites historical tidak rewrite |
-| New cropland metrics | **Suffix `_crop`** di kolom `index_name` | Tidak butuh schema redesign |
-| `index_name` CHECK constraint | **Expand** (additive) | Migration 011 non-breaking |
-| Existing API consumers | Default `mask=all` | Tidak ganti behaviour eksternal |
-| Frontend default | `maskKind = 'all'` initial state | Existing screenshots/docs tetap akurat |
+| Existing 6 indices rows | **Keep as-is** (all-land) di DB | Tidak displayed di UI, tapi exists untuk debug/analytics future |
+| New cropland metrics | **Suffix `_crop`** di kolom `index_name` | Schema additive, query trivial |
+| `index_name` CHECK constraint | **Expand** dari 6 ke 12 names | Migration 011 non-breaking |
+| API behavior change | **Default ke `_crop` rows** (breaking minor — UI dapat values berbeda) | User keputusan: tidak butuh all-land display |
+| Raw all-land data accessibility | API endpoint `?raw=true` untuk debug akses | Future flexibility kalau perlu A/B compare |
 | Baselines | Compute baru untuk `_crop` parallel | Tidak overwrite raw baselines |
+| Existing screenshots/docs | **Outdated** setelah deploy — perlu refresh | User aware, dokumentasi update di HelpPage |
 
 **Alternative dipertimbangkan & ditolak:**
 - *Kolom baru `mean_crop, p10_crop, ...`*: bloat schema, sulit baseline join
 - *Tabel baru `vegetation_indices_crop`*: duplikasi index + RLS policy + RPC copy
-- *Replace existing rows in-place*: data loss, tidak bisa A/B compare
+- *Replace existing rows in-place*: data loss, raw historical lenyap, tidak bisa rollback
+- *Frontend toggle* (rejected per keputusan user): UI simpler tanpa toggle, displayed data jelas konteks (sawah-only)
 
 ## Testing Strategy
 
@@ -176,49 +203,62 @@ ALTER TABLE index_baselines ADD CONSTRAINT index_baselines_index_name_check
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Collection ID WorldCover tidak ada di CDSE | HIGH | Phase 0 spike; fallback Terrascope STAC / AWS S3 / static download reupload Supabase |
-| Dual-save dari 1 cube tidak supported openEO | HIGH | Fallback 2 batch jobs per index, batasi kabupaten/hari, scheduled multi-day |
-| Kuota CDSE jebol saat recompute historical | HIGH | Workflow `recompute-crop.yml` throttled 5 windows/6jam, monitor header response |
-| Backfill Pontianak per-year ganggu | MEDIUM | Tambah `--skip-crop` ke backfill workflow; recompute crop sebagai phase terpisah |
-| Mask alignment off (1-pixel shift) | MEDIUM | Phase 0 validation; `resample_cube_spatial(target=s2_cube, method="mode")` exact grid match |
-| Kabupaten <1000 cropland pixels | MEDIUM | `MIN_VALID_PIXELS` guard, return null stats + log warning |
-| Frontend cache stale saat user toggle | LOW | Cache key include `maskKind`; React Query staleTime 5 min |
-| anomaly_z null untuk `_crop` sampai baseline ready | LOW | UI tampilkan "Baseline sedang dihitung" badge |
-| WorldCover 2021 tidak refleksi sawah baru/abandoned 2024-2025 | LOW (accept) | Help page documentation; future switch ke Dynamic World |
+| Dual-save 1 cube tidak supported openEO | HIGH | Phase 0 Step 4 spike validate; fallback ke single-save `_crop` only mode (`ETL_DUAL_SAVE=false`) |
+| Kuota CDSE jebol saat recompute historical | HIGH | Workflow `recompute-crop.yml` throttled 5 windows/6jam (4-day total untuk 18 windows) |
+| Pontianak backfill bentrok | HIGH | **WAJIB tunggu** Pontianak backfill selesai sebelum trigger recompute-crop |
+| WorldCover static asset download fail | MEDIUM | Phase 0 Step 1 download retry; fallback source Zenodo / AWS Open Data |
+| Mask alignment off (1-pixel shift) | MEDIUM | Phase 0 Step 5 validation; clip + resample dengan target grid match exact |
+| Kabupaten <1000 cropland pixels | MEDIUM | `MIN_VALID_PIXELS` guard, return null stats + log warning + show "Data tidak cukup" di UI |
+| User shock — values NDVI berubah drastis | MEDIUM | HelpPage banner prominent: "NDVI berubah karena sekarang dihitung hanya pada sawah/cropland (bukan seluruh wilayah)" |
+| anomaly_z null untuk `_crop` sampai baseline ready | LOW | UI badge "Baseline sedang dihitung" |
+| WorldCover 2021 tidak refleksi sawah baru/abandoned 2024-2025 | LOW (accept) | Help page documentation; future switch ke Dynamic World sebagai phase terpisah |
+| Storage Supabase Free 1GB usage naik (18 × 14 × 6 × 2 = 3024 COG potential) | MEDIUM | Cleanup raw COG lama (>3 bulan); compress lebih agresif via ZSTD; atau upgrade Pro |
 
 ## Success Criteria
 
+- [ ] WorldCover static asset 14 file ter-upload ke Supabase `assets/worldcover/{kab}.tif`
+- [ ] Phase 0 spike: dual-save openEO confirmed supported ATAU fallback `ETL_DUAL_SAVE=false` documented
 - [ ] Migration 011 deployed, CHECK constraint accept `_crop` variants
 - [ ] Smoke test Pontianak 1 window: 12 vegetation_indices rows + 2 COG per index + landcover row populated
 - [ ] Historical 18 composites all have `_crop` siblings (108 new rows)
-- [ ] API `/api/indices?kabupaten=pontianak&index=ndvi&mask=cropland` returns valid time-series
-- [ ] Frontend toggle "Sawah saja" re-renders chart dengan mean berbeda terlihat
-- [ ] Baselines `_crop` computed
-- [ ] No regression pada existing all-land queries (tested via `mask=all`)
-- [ ] Help page menjelaskan source WorldCover 2021 + class 40
+- [ ] API `/api/indices?kabupaten=pontianak&index=ndvi` returns `_crop` values default
+- [ ] Frontend menampilkan cropland-only values dengan caption jelas
+- [ ] Baselines `_crop` computed (6 × 14 × ~36 DOY buckets max)
+- [ ] No regression pada raw all-land query (tested via `?raw=true` debug endpoint)
+- [ ] Help page menjelaskan source WorldCover 2021 + class 40 + perubahan interpretation
 - [ ] Test coverage ≥80% untuk modul ETL baru
 - [ ] Pontianak backfill historical (yang sedang jalan) selesai tanpa interferensi
+- [ ] User-visible banner saat first deploy: "NDVI sekarang dihitung hanya pada area sawah/cropland"
 
 ## Effort Estimate
 
 | Phase | Effort | Calendar Time | Blocking? |
 |---|---|---|---|
-| P0 Spike | 0.5 dev-day | 1-2 hari | YES (blocking semua) |
+| P0 Static asset + spike | 1 dev-day | 1-2 hari | YES (blocking semua) |
 | P1 ETL Core | 2.5 dev-day | 3-4 hari | YES |
-| P2 Backfill | 0.5 dev-day code + 1-2 minggu wallclock CDSE | 1-2 minggu | NO (background) |
-| P3 API+Frontend | 2 dev-day | 2-3 hari | NO (paralel P2) |
+| P2 Backfill | 0.5 dev-day code + 4 hari wallclock CDSE (throttled) | 1 minggu | NO (background, tunggu Pontianak) |
+| P3 API+Frontend (no toggle) | 1 dev-day (lebih sedikit dari draft v1) | 1-2 hari | NO (paralel P2) |
 | P4 Cleanup | 0.5 dev-day | 1 hari | NO |
-| **Total** | **~6 dev-day** | **~3 minggu (paralel)** | — |
+| **Total** | **~5.5 dev-day** | **~2 minggu (paralel)** | — |
 
-## Open Questions (perlu konfirmasi sebelum mulai)
+## Eksekusi Workflow
 
-1. **Suffix `_crop` vs kolom `mask_kind`?** — Plan default suffix; konfirmasi.
-2. **Recompute historical 18 composites sekarang atau tunggu backfill Pontianak selesai?** — Plan default tunggu backfill (mitigasi risk MEDIUM).
-3. **Dual-save dari 1 cube vs 2 cube terpisah?** — Hasil Phase 0 spike menentukan.
-4. **WorldCover sebagai static asset (download 1x, reupload Supabase) atau load dari CDSE setiap run?** — Static lebih hemat kuota; rekomendasi: 14 file clipped per-kabupaten ~5MB each, total ~70MB.
+1. **WAIT** — Pontianak backfill task `bzidgs1jv` complete (~6-8 jam dari sekarang)
+2. **P0** — Run static asset download + clip + upload + dual-save spike
+3. **P1** — Implement ETL core + migration 011
+4. **P3** — Develop frontend cropland-default paralel
+5. **P2** — Recompute historical 18 composites (~4 hari background)
+6. **Baseline recompute** untuk `_crop` indices
+7. **P4** — Cleanup + docs
 
 ## Status
 
-**🟡 DRAFT — WAITING FOR CONFIRMATION**
+**🟢 CONFIRMED — siap eksekusi setelah Pontianak backfill selesai**
 
-Konfirmasi 4 open questions di atas + approve plan sebelum eksekusi.
+Semua 4 open questions terjawab:
+- Q1: Suffix `_crop` + display cropland-only (no toggle)
+- Q2: Tunggu Pontianak backfill
+- Q3: Dual-save (validate via Phase 0 spike)
+- Q4: Static asset Supabase
+
+User instruction: **JANGAN EKSEKUSI DULU** — plan sebagai blueprint, mulai implementasi setelah explicit go-ahead user.
