@@ -1,6 +1,53 @@
 # Implementation Plan: Option B — ESA WorldCover Cropland Mask
 
-Versi: 1.1 — 2026-05-25 (CONFIRMED — siap eksekusi setelah Pontianak backfill selesai)
+Versi: 1.2 — 2026-05-25 (CONFIRMED + paralel execution path defined)
+
+## Eksekusi Paralel (tidak block backfill)
+
+Bagi pekerjaan berdasar kebutuhan CDSE quota:
+
+| Kategori | Bisa sekarang? | Alasan |
+|---|---|---|
+| Static asset download/clip/upload WorldCover | ✅ YA | Sumber Zenodo/Terrascope, bukan CDSE |
+| Schema migration 011 | ✅ YA | Hanya Postgres ALTER, no CDSE |
+| ETL code changes (worldcover.py, mask_cropland.py, dst) | ✅ YA | Code only, run via dry-run lokal |
+| API code changes (validate, indices, data, composite-meta) | ✅ YA | No CDSE |
+| Frontend changes (caption, HelpPage, MapView tile URL) | ✅ YA | No CDSE |
+| Build + deploy code ke Vercel | ✅ YA | No CDSE |
+| Phase 0 Step 4 dual-save spike (1 batch job test) | ⚠️ Minor CDSE cost | 6 jobs Pontianak test — acceptable burst |
+| Phase 0 Step 5 mask alignment overlay | ✅ YA | Pakai existing Pontianak COG di Supabase |
+| Smoke test full (1 kab 1 window) Phase 2 Step 12 | ⚠️ TUNGGU backfill | 6-12 jobs CDSE bentrok Pontianak per-year |
+| Recompute historical 108 jobs (Phase 2 Step 13) | 🚫 TUNGGU backfill | Heavy quota usage |
+| Baseline recompute `_crop` (Phase 2 Step 14) | 🚫 TUNGGU Step 13 | Butuh data hasil recompute |
+
+**Plan execution:**
+
+```
+DAY 1-2 (now, paralel dengan Pontianak backfill):
+├─ Static asset WorldCover → Supabase Storage (P0 Step 1-3)
+├─ Mask alignment overlay validate (P0 Step 5)
+├─ ETL code (worldcover.py, mask_cropland.py, storage.py changes)
+├─ Migration 011 deploy
+├─ API + Frontend code changes
+├─ Build + Vercel deploy (data sementara cuma raw NDVI tampil)
+└─ Dual-save spike (P0 Step 4) — 1 micro-test pakai Pontianak (~30 menit, 6 jobs)
+
+DAY 3+ (setelah Pontianak backfill selesai):
+├─ Smoke test 1 kab 1 window (P2 Step 12)
+├─ Recompute historical 18 composites (P2 Step 13, ~4 hari)
+├─ Baseline recompute _crop (P2 Step 14)
+└─ Switch frontend default ke _crop (feature flag flip)
+```
+
+**Feature flag strategy:**
+- Deploy code dengan env `ETL_CROPLAND_MASK_ENABLED=false` default → ETL tetap save raw saja (existing behavior)
+- Frontend env `VITE_DISPLAY_CROPLAND_DEFAULT=false` → tetap render `ndvi` (existing rows)
+- Setelah recompute historical done: flip kedua flag → `true` di Vercel + GH Actions secrets
+- Rollback instant: flip flag back
+
+Code di-deploy tapi behavior tidak berubah sampai data siap.
+
+
 
 ## Keputusan Final (dari konfirmasi user)
 
@@ -241,24 +288,44 @@ ALTER TABLE index_baselines ADD CONSTRAINT index_baselines_index_name_check
 | P4 Cleanup | 0.5 dev-day | 1 hari | NO |
 | **Total** | **~5.5 dev-day** | **~2 minggu (paralel)** | — |
 
-## Eksekusi Workflow
+## Eksekusi Workflow (paralel)
 
-1. **WAIT** — Pontianak backfill task `bzidgs1jv` complete (~6-8 jam dari sekarang)
-2. **P0** — Run static asset download + clip + upload + dual-save spike
-3. **P1** — Implement ETL core + migration 011
-4. **P3** — Develop frontend cropland-default paralel
-5. **P2** — Recompute historical 18 composites (~4 hari background)
-6. **Baseline recompute** untuk `_crop` indices
-7. **P4** — Cleanup + docs
+### Track A — Code & Static Asset (NOW, paralel backfill)
+
+1. **P0 Step 1-3 + 5** — WorldCover static asset (download + clip 14 kab + upload Supabase + alignment validate)
+2. **P0 Step 4** — Dual-save micro spike (1 small test Pontianak, ~30 menit CDSE acceptable)
+3. **P1 Step 6-11** — ETL code (worldcover.py, mask_cropland.py, storage.py, stats.py, openeo_pipeline.py)
+4. **P1 Step 9** — Schema migration 011 deploy
+5. **P3 Step 15-22** — API + Frontend code changes
+6. **Build + Vercel deploy** dengan feature flag `ETL_CROPLAND_MASK_ENABLED=false` (behavior unchanged)
+7. **GH Actions workflow update** — workflow `recompute-crop.yml` baru (dispatch-only, idle sampai flag aktif)
+
+### Track B — Data Backfill (TUNGGU Pontianak backfill task `bzidgs1jv` selesai)
+
+8. Flip ETL flag → `true` di GH Actions secrets
+9. **P2 Step 12** — Smoke test 1 kab 1 window via workflow_dispatch dual-save
+10. **P2 Step 13** — Trigger `recompute-crop.yml` (~4 hari background, throttled)
+11. **P2 Step 14** — Baseline recompute `_crop`
+12. Flip frontend flag → `true` di Vercel env
+13. **P4 Step 23-26** — Cleanup + docs
+
+### Rollback path
+
+Kalau ada bug ditemukan setelah flag flip:
+- Frontend: flip `VITE_DISPLAY_CROPLAND_DEFAULT=false` → redeploy ~2 min
+- ETL: flip `ETL_CROPLAND_MASK_ENABLED=false` → next cron pakai existing behavior
+- DB: tetap intact (raw + crop side-by-side)
 
 ## Status
 
-**🟢 CONFIRMED — siap eksekusi setelah Pontianak backfill selesai**
+**🟢 CONFIRMED — paralel execution path defined**
 
 Semua 4 open questions terjawab:
 - Q1: Suffix `_crop` + display cropland-only (no toggle)
-- Q2: Tunggu Pontianak backfill
+- Q2: Tunggu Pontianak backfill (untuk data recompute saja — code bisa paralel)
 - Q3: Dual-save (validate via Phase 0 spike)
 - Q4: Static asset Supabase
 
-User instruction: **JANGAN EKSEKUSI DULU** — plan sebagai blueprint, mulai implementasi setelah explicit go-ahead user.
+**Eksekusi:** Track A (code + static asset) bisa mulai sekarang paralel Pontianak backfill. Track B (data recompute + flag flip) menunggu backfill selesai. Feature flag jamin behavior tidak berubah sampai siap.
+
+User instruction: **MENUNGGU GO-AHEAD** untuk mulai Track A.
