@@ -8,7 +8,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const TRANSPARENT_PNG_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=';
 
-const RESCALE = {
+const CROP_ENABLED = process.env.VITE_DISPLAY_CROPLAND_DEFAULT === 'true'
+  || process.env.DISPLAY_CROPLAND_DEFAULT === 'true';
+
+const BASE_RESCALE = {
   ndvi: '-0.2,0.9',
   ndwi: '-0.5,0.5',
   mndwi: '-0.5,0.8',
@@ -16,14 +19,23 @@ const RESCALE = {
   msi: '0.0,2.0',
   evi: '-0.2,0.9'
 };
+// _crop variants use same rescale
+const RESCALE = {
+  ...BASE_RESCALE,
+  ...Object.fromEntries(Object.entries(BASE_RESCALE).map(([k, v]) => [`${k}_crop`, v])),
+};
 
-const COLORMAP = {
+const BASE_COLORMAP = {
   ndvi: 'rdylgn',
   ndwi: 'brbg',
   mndwi: 'blues',
   ndmi: 'rdbu',
   msi: 'viridis',
   evi: 'rdylgn'
+};
+const COLORMAP = {
+  ...BASE_COLORMAP,
+  ...Object.fromEntries(Object.entries(BASE_COLORMAP).map(([k, v]) => [`${k}_crop`, v])),
 };
 
 function transparentPng() {
@@ -59,10 +71,14 @@ export async function GET(request) {
     });
   }
 
-  const rescale = RESCALE[index] ?? RESCALE.ndvi;
-  const colormap = COLORMAP[index] ?? COLORMAP.ndvi;
+  // When cropland display enabled, resolve to _crop COG; fall back to raw if _crop not yet available.
+  // Frontend passes base index name (e.g. "ndvi"); tile API appends _crop suffix.
+  const resolvedIndex = CROP_ENABLED && !index.endsWith('_crop') ? `${index}_crop` : index;
+  const baseIndex = resolvedIndex.replace(/_crop$/, '');
+  const rescale = RESCALE[resolvedIndex] ?? RESCALE[baseIndex] ?? RESCALE.ndvi;
+  const colormap = COLORMAP[resolvedIndex] ?? COLORMAP[baseIndex] ?? COLORMAP.ndvi;
   const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? 'composites';
-  const cogUrl = `${SUPABASE_URL}/storage/v1/object/public/${bucket}/composites/${kabupaten}/${date}/${index}.tif`;
+  const cogUrl = `${SUPABASE_URL}/storage/v1/object/public/${bucket}/composites/${kabupaten}/${date}/${resolvedIndex}.tif`;
   const titilerUrl =
     `${TITILER}/cog/tiles/WebMercatorQuad/${z}/${x}/${y}.png` +
     `?url=${encodeURIComponent(cogUrl)}&rescale=${rescale}&colormap_name=${colormap}`;

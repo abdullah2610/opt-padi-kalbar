@@ -6,7 +6,18 @@ export function hasSupabase() {
   return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
 }
 
+// When cropland display is active, auto-append _crop suffix so frontend always
+// requests base name (e.g. "ndvi") and receives cropland-only values transparently.
+function resolveCropIndex(indexName) {
+  const cropEnabled = process.env.VITE_DISPLAY_CROPLAND_DEFAULT === 'true'
+    || process.env.DISPLAY_CROPLAND_DEFAULT === 'true';
+  if (!cropEnabled) return indexName;
+  if (indexName.endsWith('_crop')) return indexName; // already suffixed
+  return `${indexName}_crop`;
+}
+
 export async function fetchIndicesSeries(kabupatenId, indexName, from, to) {
+  const resolvedIndex = resolveCropIndex(indexName);
   const sb = supabaseAnon();
   const { data, error } = await sb
     .from('vegetation_indices')
@@ -14,7 +25,7 @@ export async function fetchIndicesSeries(kabupatenId, indexName, from, to) {
       'observation_date, kabupaten_id, index_name, mean, p10, p50, p90, std, anomaly_z, area_clear_pct'
     )
     .eq('kabupaten_id', kabupatenId)
-    .eq('index_name', indexName)
+    .eq('index_name', resolvedIndex)
     .gte('observation_date', from)
     .lte('observation_date', to)
     .order('observation_date')

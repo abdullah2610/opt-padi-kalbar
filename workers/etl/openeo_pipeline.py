@@ -16,6 +16,11 @@ CDSE_OPENEO_URL = os.getenv("CDSE_OPENEO_URL", "https://openeo.dataspace.coperni
 S2_COLLECTION = "SENTINEL2_L2A"
 S2_BANDS = ["B02", "B03", "B04", "B08", "B11", "B12", "SCL"]
 
+# Feature flag: jika True, pipeline simpan raw + cropland-masked COG per index (dual-save).
+# Default False — behavior tetap seperti sebelumnya sampai data siap.
+# Flip ke True via GH Secrets setelah Pontianak backfill selesai + Phase 0 spike validated.
+CROPLAND_MASK_ENABLED = os.getenv("ETL_CROPLAND_MASK_ENABLED", "false").lower() == "true"
+
 
 @dataclass(frozen=True)
 class CompositeRequest:
@@ -89,6 +94,11 @@ def build_composite(req: CompositeRequest) -> list[tuple[str, object]]:
     if resolution_m > 10:
         cube = cube.resample_spatial(resolution=resolution_m, method="average")
 
+    if CROPLAND_MASK_ENABLED:
+        log.info("CROPLAND_MASK_ENABLED=true — dual-save mode (raw + _crop per index)")
+    else:
+        log.info("CROPLAND_MASK_ENABLED=false — raw only (existing behavior)")
+
     jobs: list[tuple[str, object]] = []
     for name, fn in INDEX_FUNCTIONS.items():
         idx_cube = fn(cube)
@@ -97,6 +107,7 @@ def build_composite(req: CompositeRequest) -> list[tuple[str, object]]:
             title=title,
             description=f"opt-padi-kalbar composite {req.start_date}..{req.end_date}",
         )
+        # job_name: "ndvi" for raw. Cropland masking applied in main.py post-download.
         jobs.append((name, job))
         log.info("submitted batch job %s: %s", name, getattr(job, "job_id", job))
 

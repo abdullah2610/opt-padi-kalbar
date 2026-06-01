@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import clsx from 'clsx';
 
-type SectionId = 'umum' | 'peta' | 'dasbor' | 'indeks' | 'penyakit' | 'panen' | 'alert' | 'faq';
+type SectionId = 'umum' | 'peta' | 'dasbor' | 'indeks' | 'cropland' | 'penyakit' | 'panen' | 'alert' | 'faq';
 
 const SECTIONS: { id: SectionId; label: string; icon: string }[] = [
   { id: 'umum',     label: 'Pengantar',         icon: '📖' },
   { id: 'peta',     label: 'Tab Peta',          icon: '🗺️' },
   { id: 'dasbor',   label: 'Tab Dasbor',        icon: '📊' },
   { id: 'indeks',   label: 'Indeks Vegetasi',   icon: '🌱' },
+  { id: 'cropland', label: 'Cropland Mask',     icon: '🌾' },
   { id: 'penyakit', label: 'Risiko Penyakit',   icon: '🦠' },
   { id: 'panen',    label: 'Estimasi Panen',    icon: '🌾' },
   { id: 'alert',    label: 'Peringatan',        icon: '⚠️' },
@@ -46,6 +47,7 @@ export default function HelpPage() {
           {active === 'peta' && <Peta />}
           {active === 'dasbor' && <Dasbor />}
           {active === 'indeks' && <Indeks />}
+          {active === 'cropland' && <CroplandMask />}
           {active === 'penyakit' && <Penyakit />}
           {active === 'panen' && <Panen />}
           {active === 'alert' && <Alert />}
@@ -257,6 +259,65 @@ function Indeks() {
         <strong>Baseline 2019-2023 belum di-build.</strong> Z-score sementara NULL atau bias. Sedang dalam
         rencana baseline historis multi-tahun.
       </Note>
+    </>
+  );
+}
+
+function CroplandMask() {
+  return (
+    <>
+      <H1>🌾 Cropland Mask — Sawah & Tanaman Semusim</H1>
+      <P>
+        Sejak versi ini, statistik indeks vegetasi (NDVI, NDWI, dst.) dihitung <strong>hanya pada piksel
+        cropland</strong> — yaitu area sawah, ladang, dan tanaman semusim — berdasarkan peta tutupan
+        lahan ESA WorldCover 2021.
+      </P>
+
+      <Note>
+        <strong>Nilai NDVI berubah dari sebelumnya</strong> karena sekarang dihitung hanya pada area
+        cropland (sawah/tanaman semusim), bukan seluruh wilayah kabupaten (termasuk hutan, kota, perairan).
+        Ini membuat nilai lebih relevan untuk monitoring pertanian.
+      </Note>
+
+      <H2>Sumber Data Mask</H2>
+      <Box title="ESA WorldCover 10m 2021 v200">
+        Peta tutupan lahan resolusi 10 meter dari European Space Agency.
+        Diproduksi dari citra Sentinel-1 + Sentinel-2 tahun 2021.
+        <br />
+        <strong>Class 40 = Cropland</strong> (sawah, ladang, tanaman semusim).
+        Di-clip per kabupaten, di-resample ke 100 m (mode/majority voting).
+        Disimpan sebagai static asset di Supabase Storage.
+      </Box>
+
+      <H2>Cara Mask Bekerja</H2>
+      <ul className="ml-4 list-disc space-y-1 text-sm text-slate-300">
+        <li>ETL download COG Sentinel-2 (100m) per indeks per kabupaten.</li>
+        <li>Piksel non-cropland (kelas selain 40: hutan, air, urban, dll.) di-set ke <em>nodata</em>.</li>
+        <li>Statistik (mean, p10, p90) dihitung hanya dari piksel cropland yang valid.</li>
+        <li>Dua COG disimpan: <code className="text-padi-300">ndvi.tif</code> (all-land, backup) dan <code className="text-padi-300">ndvi_crop.tif</code> (cropland-only, yang ditampilkan).</li>
+      </ul>
+
+      <H2>Implikasi Nilai NDVI</H2>
+      <Box title="Contoh perbandingan">
+        <ul className="ml-4 list-disc space-y-1">
+          <li><strong>NDVI all-land Pontianak 0.45</strong> — rata-rata seluruh wilayah (kota + sungai + taman + sawah)</li>
+          <li><strong>NDVI cropland Pontianak 0.62</strong> — rata-rata hanya area sawah/cropland</li>
+        </ul>
+        Nilai cropland lebih tinggi karena piksel kota (rendah) dan air (negatif) sudah dikeluarkan.
+      </Box>
+
+      <H2>Keterbatasan</H2>
+      <ul className="ml-4 list-disc space-y-1 text-sm text-slate-300">
+        <li><strong>WorldCover 2021</strong> — tidak menangkap perubahan lahan setelah 2021 (sawah baru atau lahan abandoned).</li>
+        <li><strong>Resolusi 100m</strong> — satu piksel = ~1 hektar. Petak kecil (&lt;1 ha) mungkin tidak terdeteksi.</li>
+        <li><strong>Kabupaten minim cropland</strong> (seperti Kayong Utara atau Melawi yang dominan hutan) mungkin menampilkan "Data tidak cukup" jika piksel cropland &lt; 1000.</li>
+      </ul>
+
+      <H2>Luas Cropland per Kabupaten</H2>
+      <P>
+        Luas area cropland (hektar) dari WorldCover 2021 ditampilkan di card kabupaten.
+        Ini adalah estimasi luas lahan pertanian — bukan data BPS resmi.
+      </P>
     </>
   );
 }

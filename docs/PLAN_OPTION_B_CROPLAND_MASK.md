@@ -318,14 +318,62 @@ Kalau ada bug ditemukan setelah flag flip:
 
 ## Status
 
-**🟢 CONFIRMED — paralel execution path defined**
+**🟢 CONFIRMED — Track A DONE ✅, Track B menunggu**
 
-Semua 4 open questions terjawab:
-- Q1: Suffix `_crop` + display cropland-only (no toggle)
-- Q2: Tunggu Pontianak backfill (untuk data recompute saja — code bisa paralel)
-- Q3: Dual-save (validate via Phase 0 spike)
-- Q4: Static asset Supabase
+Semua 4 keputusan dikonfirmasi & terverifikasi lewat spike test.
 
-**Eksekusi:** Track A (code + static asset) bisa mulai sekarang paralel Pontianak backfill. Track B (data recompute + flag flip) menunggu backfill selesai. Feature flag jamin behavior tidak berubah sampai siap.
+**Eksekusi:** Track A SELESAI 2026-05-25. Track B (data recompute + flag flip) menunggu backfill selesai.
 
-User instruction: **MENUNGGU GO-AHEAD** untuk mulai Track A.
+---
+
+## Execution Progress (2026-05-25)
+
+### Track A — DONE ✅ (2026-05-25)
+
+**Semua step P0 + P1 + P3 selesai. Dual-save pipeline verified working.**
+
+| Step | Status | Detail |
+|---|---|---|
+| P0-1 Download WorldCover | ✅ | 10 tile dari ESA S3 bucket (138 MB) |
+| P0-2 Clip per-kabupaten | ✅ | 14 file GeoTIFF (total ~800 KB) |
+| P0-3 Upload Supabase | ✅ | `assets/worldcover/{kab}.tif` — HTTP 200 all 14 |
+| P1-9 Migration 011 | ✅ | 3 kolom (`cropland_mask_path`, `cropland_pixel_count`, `cropland_area_ha`) + CHECK 12 nama |
+| P3 Vercel deploy | ✅ | `sipopt.agroinovasi.my.id` — `VITE_DISPLAY_CROPLAND_DEFAULT=false` |
+| P0-5 Alignment validate | ✅ | Auto-validasi via P0-4 — grid reprojection berfungsi |
+| **P0-4 Dual-save spike** | ✅ | **Pontianak** (0% crop, urban) + **Mempawah** (0.8% crop, 3.672 px) |
+
+### Spike Results
+
+#### Pontianak (urban test)
+- 12 rows terinsert (6 raw + 6 _crop), `_crop` mean NULL (0 cropland px)
+- Expected: Pontianak = kota, class 40 (cropland) kosong
+
+#### Mempawah (agraris test) ✅ BERHASIL
+
+| Index | Raw (all-land) | Crop (sawah-only) | Perubahan |
+|---|---|---|---|
+| ndvi | 0.328 | **0.544** | +65% — sawah jauh lebih hijau |
+| ndwi | -0.234 | **-0.507** | -117% — sawah lebih basah (digenangi) |
+| mndwi | -0.111 | **-0.417** | -275% |
+| ndmi | 0.177 | 0.115 | -35% |
+| msi | 0.738 | 0.828 | +12% |
+| evi | 2.020 | **2.867** | +42% — vegetasi lebih padat |
+
+**Pipeline dual-save 100% berfungsi:**
+- 1 batch job → 6 submit CDSE (ndvi..evi) → 12 COG upload (6 raw + 6 _crop) → 12 DB row insert
+- Grid misalignment ditangani otomatis oleh `align_mask_to_raster()` → reproject on-the-fly
+- WorldCover load dari Supabase Storage URL public (cache per-session via `lru_cache`)
+
+### Lessons Learned
+- URL WorldCover: Zenodo `5571936` timeout → ESA S3 `esa-worldcover` works
+- `clip_worldcover.py` merge multi-tile bug → rewrite simplify
+- `ETL_CROPLAND_MASK_ENABLED` harus eksplisit di `workers/etl/.env`
+- ETL via `uv run` (Poetry venv) bukan `python3`
+- Kabupaten selatan ekuator (ketapang, melawi, kayong-utara) butuh tile S03
+- Pontianak urban = 0% cropland → _crop stats NULL (expected), tidak perlu diperbaiki
+
+### Next Steps (Track B — tunggu backfill)
+1. ~~Tunggu Pontianak backfill selesai (task backlog)~~ ← saat ini belum mulai
+2. Trigger recompute-crop untuk historical composites (108 jobs throttled)
+3. Baseline `_crop` recompute
+4. Flip feature flag: `VITE_DISPLAY_CROPLAND_DEFAULT=true` di Vercel + `ETL_CROPLAND_MASK_ENABLED=true` confirmed

@@ -64,7 +64,7 @@ INDEX_FUNCTIONS = {
 }
 
 # Rescale + colormap untuk TiTiler tile rendering
-INDEX_RENDERING = {
+_BASE_RENDERING = {
     "ndvi": {"rescale": (-0.2, 0.9), "colormap_name": "rdylgn"},
     "ndwi": {"rescale": (-0.5, 0.5), "colormap_name": "brbg"},
     "mndwi": {"rescale": (-0.5, 0.8), "colormap_name": "blues"},
@@ -72,3 +72,13 @@ INDEX_RENDERING = {
     "msi": {"rescale": (0.0, 2.0), "colormap_name": "viridis"},
     "evi": {"rescale": (-0.2, 0.9), "colormap_name": "rdylgn"},
 }
+
+# _crop variants use same rescale + colormap as base
+INDEX_RENDERING: dict[str, dict] = {
+    **_BASE_RENDERING,
+    **{f"{k}_crop": v for k, v in _BASE_RENDERING.items()},
+}
+
+ALL_INDEX_NAMES: list[str] = list(INDEX_FUNCTIONS.keys())
+ALL_INDEX_NAMES_CROP: list[str] = [f"{k}_crop" for k in ALL_INDEX_NAMES]
+ALL_INDEX_NAMES_BOTH: list[str] = ALL_INDEX_NAMES + ALL_INDEX_NAMES_CROP

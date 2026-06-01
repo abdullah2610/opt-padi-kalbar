@@ -60,8 +60,15 @@ def insert_composite_row(
     scl_clear_pct: float | None,
     indices_stats: dict[str, dict],
     scene_count: int | None = None,
+    cropland_mask_path: str | None = None,
+    cropland_pixel_count: int | None = None,
+    cropland_area_ha: float | None = None,
 ) -> None:
-    """Upsert sentinel_composites + vegetation_indices rows."""
+    """Upsert sentinel_composites + vegetation_indices rows.
+
+    indices_stats may contain both raw ("ndvi") and cropland ("ndvi_crop") keys.
+    Both are inserted as separate vegetation_indices rows with the appropriate index_name.
+    """
     client = get_supabase_client()
     obs_date = midpoint_date(period_start, period_end)
 
@@ -75,6 +82,14 @@ def insert_composite_row(
         "status": "completed",
         "scene_count": scene_count,
     }
+    # Optional cropland metadata columns (added by migration 011)
+    if cropland_mask_path is not None:
+        composite_row["cropland_mask_path"] = cropland_mask_path
+    if cropland_pixel_count is not None:
+        composite_row["cropland_pixel_count"] = cropland_pixel_count
+    if cropland_area_ha is not None:
+        composite_row["cropland_area_ha"] = cropland_area_ha
+
     res = (
         client.table("sentinel_composites")
         .upsert(composite_row, on_conflict="kabupaten_id,period_start,period_end")
@@ -126,6 +141,34 @@ def insert_composite_row(
         log.warning("detect_stress RPC skipped: %s", exc)
 
     log.info("inserted composite + %d index rows for %s", len(indices_stats), kabupaten_id)
+
+
+def insert_landcover_row(
+    kabupaten_id: str,
+    observation_date: str,
+    class_code: int,
+    class_name: str,
+    area_ha: float,
+    total_ha: float,
+    source: str = "worldcover_2021",
+) -> None:
+    """Upsert landcover row (by-product of WorldCover mask processing)."""
+    client = get_supabase_client()
+    area_pct = round(100 * area_ha / total_ha, 4) if total_ha > 0 else 0.0
+    client.table("landcover").upsert(
+        {
+            "kabupaten_id": kabupaten_id,
+            "observation_date": observation_date,
+            "class_code": class_code,
+            "class_name": class_name,
+            "area_ha": round(area_ha, 2),
+            "area_pct": area_pct,
+            "source": source,
+        },
+        on_conflict="kabupaten_id,observation_date,class_code",
+    ).execute()
+    log.debug("landcover upserted: %s %s class=%d %.0f ha (%.1f%%)",
+              kabupaten_id, observation_date, class_code, area_ha, area_pct)
 
 
 def mark_composite_failed(kabupaten_id: str, period_start: str, period_end: str, message: str) -> None:

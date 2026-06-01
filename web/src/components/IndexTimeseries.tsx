@@ -12,6 +12,8 @@ interface Props {
   indexName: IndexName;
 }
 
+const CROP_ENABLED = import.meta.env.VITE_DISPLAY_CROPLAND_DEFAULT === 'true';
+
 export default function IndexTimeseries({ data, indexName }: Props) {
   if (!data.length) return <div className="text-xs text-slate-500">Belum ada data.</div>;
 
@@ -60,8 +62,15 @@ export default function IndexTimeseries({ data, indexName }: Props) {
   };
 
   return (
-    <div className="h-40">
-      <Line data={chartData} options={options} />
+    <div>
+      {CROP_ENABLED && (
+        <div className="mb-1 text-xs text-emerald-400/80">
+          Cropland-only (sawah + tanaman semusim)
+        </div>
+      )}
+      <div className="h-40">
+        <Line data={chartData} options={options} />
+      </div>
     </div>
   );
 }

@@ -30,6 +30,21 @@ export function OPTIONS() {
   return preflight();
 }
 
+const CROP_ENABLED = process.env.VITE_DISPLAY_CROPLAND_DEFAULT === 'true'
+  || process.env.DISPLAY_CROPLAND_DEFAULT === 'true';
+
+const BASE_INDICES = ['ndvi', 'ndwi', 'mndwi', 'ndmi', 'msi', 'evi'];
+
+function resolveCogPaths(row) {
+  if (!CROP_ENABLED || !row.cog_paths) return row.cog_paths;
+  // Prefer _crop paths when available; fall back to raw
+  const resolved = {};
+  for (const idx of BASE_INDICES) {
+    resolved[idx] = row.cog_paths[`${idx}_crop`] ?? row.cog_paths[idx];
+  }
+  return resolved;
+}
+
 export async function GET(request) {
   try {
     const q = getQuery(request);
@@ -44,7 +59,11 @@ export async function GET(request) {
       try {
         const rows = await fetchCompositeMeta(id);
         if (rows.length > 0) {
-          out = rows;
+          out = rows.map((row) => ({
+            ...row,
+            cog_paths: resolveCogPaths(row),
+            cropland_area_ha: row.cropland_area_ha ?? null,
+          }));
           source = 'sentinel';
         }
       } catch (err) {
@@ -57,7 +76,7 @@ export async function GET(request) {
     }
 
     return ok(out, {
-      meta: { kabupaten: kab.nama, count: out.length, source },
+      meta: { kabupaten: kab.nama, count: out.length, source, cropland: CROP_ENABLED },
       headers: { 'Cache-Control': 'public, max-age=300, s-maxage=3600' }
     });
   } catch (err) {

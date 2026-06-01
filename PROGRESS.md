@@ -1,12 +1,63 @@
 # Progress — opt-padi-kalbar
+### Backfill Paralel (2026-05-30 aktif)
 
+```bash
+# Monitor live
+tail -f workers/etl/logs/backfill_*.log
+
+# Status worker
+ps aux | grep "main.py backfill" | grep python
+
+# Stop darurat
+kill $(cat workers/etl/logs/backfill_*.pid)
+```
+
+**Stagger:** 15 menit antar kabupaten, dimulai sambas 11:51 WIB:
+| Waktu (WIB) | Kabupaten |
+|---|---|
+| 11:51 | sambas |
+| 12:06 | bengkayang |
+| 12:21 | landak |
+| 12:36 | mempawah |
+| 12:51 | sanggau |
+| 13:06 | ketapang |
+| 13:21 | sintang |
+| 13:36 | kapuas-hulu |
+| 13:51 | sekadau |
+| 14:06 | melawi |
+| 14:21 | kayong-utara |
+| 14:36 | kubu-raya |
+| 14:51 | singkawang |
+
+Estimasi: 12 composite windows × 6 indeks = 72 batch jobs CDSE per kabupaten (~14 jam/kab).
+Total 936 jobs, @5/jam = ~188 jam (~8 hari).
 Status pengerjaan aplikasi web mobile-first pemantauan padi 14 kab/kota Kalbar dgn Sentinel-2.
 
-**Tanggal update:** 2026-05-23 (sesi ke-4: deploy live — Vercel + Fly.io TiTiler + 13 kab ETL @100m background)
+**Tanggal update:** 2026-05-30 (sesi ke-5: backfill paralel 13 kabupaten 2025 + Track A WorldCover selesai)
 **Plan asli:** `.claude/plans/streamed-imagining-thunder.md`
 **Arsitektur:** `ARCHITECTURE.md`
 
-## Perubahan Sesi Ini
+## Perubahan Sesi ke-5 (2026-05-30)
+
+- **Track A — ESA WorldCover Cropland Mask SELESAI**:
+  - P0-1 Download 10 tile WorldCover dari ESA S3 (138 MB)
+  - P0-2 Clip per-kabupaten → 14 file GeoTIFF (~800 KB total)
+  - P0-3 Upload ke Supabase `assets/worldcover/{kab}.tif` (HTTP 200 all 14)
+  - P1-9 Migration 011 — 3 kolom baru + CHECK constraint 12 nama index
+  - P3 Vercel deploy `sipopt.agroinovasi.my.id` — `VITE_DISPLAY_CROPLAND_DEFAULT=false`
+  - P0-4 Dual-save spike — Mempawah berhasil: 12 rows (6 raw + 6 _crop), NDVI crop 65% lebih tinggi
+  - P0-5 Alignment validation — grid reprojection berfungsi otomatis
+  - Tools baru: `clip_worldcover.py`, `fetch_worldcover.mjs`, `upload_worldcover.mjs`, `validate_alignment.py`
+  - GHA workflow: `recompute-crop.yml`
+- **Backfill paralel 13 kabupaten 2025 dimulai**:
+  - Skip Pontianak (0 piksel cropland, @10m inkonsisten)
+  - 13 worker staggered 15 menit via `run_backfill_parallel.sh`
+  - `sambas` jalan composite 1/12 (window Jan 2025), 12 kab lain sleep
+  - Estimasi: ~8 hari (936 batch jobs ÷ 5/jam CDSE free)
+- **Migration 011 `cropland_mask` ter-apply**: `cropland_mask_path`, `cropland_pixel_count`, `cropland_area_ha` di `sentinel_composites`
+- **PENDING.md diupdate** — Track A selesai, Track B menunggu backfill
+
+## Perubahan Sesi Sebelumnya
 
 - Hapus 21 file stale `.js` di `web/src/` (sisa dari `tsc --noEmit false` build lama).
 - Fix `web/package.json` build script → `tsc -b --noEmit && vite build` (cegah emit ulang).
@@ -51,28 +102,32 @@ Status pengerjaan aplikasi web mobile-first pemantauan padi 14 kab/kota Kalbar d
 
 ## Ringkasan Status
 
-| Phase | Nama | Status | Estimasi sisa |
+| Phase | Nama | Status | Catatan |
 |---|---|---|---|
 | 0 | Scaffold monorepo | ✅ Done | — |
-| 1 | GeoJSON kabupaten + DB migrations | ✅ 001-009 applied + 14 kabupaten seeded | — |
-| 2 | Python ETL openEO Sentinel-2 | ✅ Pontianak @10m + 13 kab @100m running background | tunggu batch selesai (~3 jam) |
-| 3 | TiTiler tile serving | ✅ **Live di Fly.io** `opt-padi-titiler.fly.dev` (verified) | — |
-| 4 | Analytics modules | ✅ API + SQL + data Sentinel-2 real (Pontianak) | tambah data 13 kab |
-| 5 | Vercel REST API endpoints | ✅ **Live di opt-padi-kalbar.vercel.app** | — |
-| 6 | Mobile-first React frontend | ✅ Done MVP — typecheck + build hijau, PWA OK | polish opsional |
-| 7 | Deploy & observability | ✅ Vercel + Fly.io live, Sentry wired | Sentry DSN opsional |
-| 8 | Auth multi-role | 🔒 Deferred Phase-2 | — |
+| 1 | GeoJSON kabupaten + DB migrations | ✅ 001-011 applied + 14 kabupaten seeded | Migration 011 cropland mask active |
+| 2 | Python ETL openEO Sentinel-2 | 🟡 Backfill 13 kab 2025 berjalan | 8 hari estimasi, paralel staggered |
+| 3 | TiTiler tile serving | ✅ Live di Fly.io | — |
+| 4 | Analytics modules | ✅ API + SQL + data Sentinel-2 real | baseline belum terisi, anomaly_z NULL |
+| 5 | Vercel REST API endpoints | ✅ Live | sipopt.agroinovasi.my.id + opt-padi-kalbar.vercel.app |
+| 6 | Mobile-first React frontend | ✅ Done MVP | Typecheck + build hijau |
+| 7 | Deploy & observability | 🟡 Partial | Sentry DSN belum diset di production |
+| 8 | Auth multi-role | 🔒 Deferred | — |
+| — | **Track A (WorldCover)** | ✅ **Selesai** | Dual-save raw + _crop, 12 indeks per composite |
+| — | **Track B (Recompute-crop)** | ⏳ Menunggu backfill | 108 composites tanpa _crop menunggu data historical |
 
-**Total sisa:**
-- 🟡 ETL 13 kab @100m background (otomatis selesai ~3 jam)
-- ⚪ Polish frontend / Sentry DSN (opsional)
-- ⚪ Baseline historical NDVI 5 tahun (~12 jam batch jobs CDSE — Phase analytics tinggi)
-- 🔒 Phase 8 Auth (deferred)
+**Pekerjaan aktif:**
+- 🟡 Backfill 13 kabupaten 2025 — 13 process berjalan, sambas composite 1/12
+- ⚪ Recompute-crop 108 composites + baseline `_crop` — tunggu backfill selesai
+- ⚪ Baseline 5 tahun `index_baselines` — tunggu backfill selesai
+- ⚪ Sentry DSN production — env belum diset di Vercel
+- ⚪ GitHub Actions secrets — belum diset di repo
 
 **Live URLs:**
-- Frontend + API: https://opt-padi-kalbar.vercel.app
+- Frontend (cropland): https://sipopt.agroinovasi.my.id
+- Frontend: https://opt-padi-kalbar.vercel.app
 - TiTiler: https://opt-padi-titiler.fly.dev
-- Supabase Postgres: `prrxzfmcgkwhrsuuiyox.supabase.co` (pooler `aws-1-ap-northeast-1`)
+- Supabase: `prrxzfmcgkwhrsuuiyox.supabase.co`
 
 ---
 

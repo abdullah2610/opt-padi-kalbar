@@ -104,13 +104,31 @@ def composite(kabupaten: str, start: str, end: str, upload: bool, dry_run: bool)
 # No automatic retry — re-running build_composite re-submits CDSE batch jobs and burns quota.
 # Failed run? Re-invoke manually; CDSE keeps recent finished jobs for ~24h (refetchable by job id).
 def _run_composite(req, upload: bool) -> None:
-    from openeo_pipeline import build_composite
+    from openeo_pipeline import build_composite, CROPLAND_MASK_ENABLED
     from stats import compute_index_stats
     from storage import insert_composite_row, mark_composite_failed, upload_cog
 
     jobs = build_composite(req)
     cog_paths: dict[str, str] = {}
     indices_stats: dict[str, dict] = {}
+
+    # Pre-load WorldCover mask once if cropland mode active
+    wc_mask = wc_transform = wc_crs = None
+    cropland_px_count = None
+    cropland_ha = None
+    if CROPLAND_MASK_ENABLED and upload:
+        try:
+            from worldcover import load_cropland_mask, cropland_area_ha
+            wc_mask, wc_transform, wc_crs = load_cropland_mask(req.kabupaten_id)
+            cropland_px_count = int(wc_mask.sum())
+            cropland_ha = cropland_area_ha(req.kabupaten_id)
+            log.info("WorldCover mask loaded for %s: %d px (%.0f ha)",
+                     req.kabupaten_id, cropland_px_count, cropland_ha or 0)
+        except Exception as exc:
+            log.error("WorldCover mask load failed for %s: %s — continuing without crop mask",
+                      req.kabupaten_id, exc)
+            # Degrade gracefully: ETL_CROPLAND_MASK_ENABLED=true but mask unavailable → skip crop
+            wc_mask = None
 
     try:
         for name, job in jobs:
@@ -123,11 +141,29 @@ def _run_composite(req, upload: bool) -> None:
                 tmp_path = Path(tmp.name)
             try:
                 job.get_results().download_file(str(tmp_path))
-                stats = compute_index_stats(tmp_path)
-                indices_stats[name] = stats
+
+                # Raw stats (all-land)
+                raw_stats = compute_index_stats(tmp_path)
+                indices_stats[name] = raw_stats
+
                 if upload:
                     remote = f"composites/{req.kabupaten_id}/{req.end_date}/{name}.tif"
                     cog_paths[name] = upload_cog(tmp_path, remote)
+
+                # Cropland-masked stats + COG
+                if CROPLAND_MASK_ENABLED and wc_mask is not None and upload:
+                    try:
+                        from mask_cropland import apply_cropland_to_file
+                        crop_tmp = apply_cropland_to_file(tmp_path, wc_mask, wc_transform, wc_crs)
+                        try:
+                            crop_stats = compute_index_stats(crop_tmp)
+                            indices_stats[f"{name}_crop"] = crop_stats
+                            crop_remote = f"composites/{req.kabupaten_id}/{req.end_date}/{name}_crop.tif"
+                            cog_paths[f"{name}_crop"] = upload_cog(crop_tmp, crop_remote)
+                        finally:
+                            crop_tmp.unlink(missing_ok=True)
+                    except Exception as exc:
+                        log.error("Cropland mask failed for %s %s: %s — raw only", req.kabupaten_id, name, exc)
             finally:
                 tmp_path.unlink(missing_ok=True)
 
@@ -141,6 +177,7 @@ def _run_composite(req, upload: bool) -> None:
             return
 
         if upload:
+            wc_path = f"assets/worldcover/{req.kabupaten_id}.tif" if CROPLAND_MASK_ENABLED and wc_mask is not None else None
             insert_composite_row(
                 req.kabupaten_id,
                 req.start_date,
@@ -148,8 +185,12 @@ def _run_composite(req, upload: bool) -> None:
                 cog_paths,
                 ndvi_clear,
                 indices_stats,
+                cropland_mask_path=wc_path,
+                cropland_pixel_count=cropland_px_count,
+                cropland_area_ha=cropland_ha,
             )
-            log.info("composite uploaded + inserted for %s", req.kabupaten_id)
+            log.info("composite uploaded + inserted for %s (%d index rows)",
+                     req.kabupaten_id, len(indices_stats))
     except Exception as exc:
         log.exception("composite failed: %s", exc)
         if upload:
@@ -364,6 +405,107 @@ def backfill(years: str, kabupaten: str | None, window_days: int, start_month: i
 
 def upload_required() -> bool:
     return all(os.getenv(k) for k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"))
+
+
+@cli.command("recompute-crop")
+@click.option("--kabupaten", default=None, help="single kab or all if omitted")
+@click.option("--dry-run", is_flag=True, help="show plan only, no CDSE submission")
+@click.option("--delay-sec", default=120, type=int, help="sleep antara composite (throttle CDSE quota)")
+def recompute_crop(kabupaten: str | None, dry_run: bool, delay_sec: int) -> None:
+    """Recompute _crop COG + stats untuk semua existing composites tanpa data _crop.
+
+    Jalankan SETELAH Pontianak per-year backfill selesai (Task B, Phase 2 Step 13).
+    Throttle 5 batch jobs/jam via --delay-sec. Estimasi 4 hari untuk 108 composites.
+
+    Prerequisites:
+    - ETL_CROPLAND_MASK_ENABLED=true di env
+    - WorldCover tiles uploaded ke Supabase assets/worldcover/
+    - Migration 011 deployed
+    """
+    from openeo_pipeline import CROPLAND_MASK_ENABLED
+
+    if not CROPLAND_MASK_ENABLED:
+        raise click.ClickException(
+            "ETL_CROPLAND_MASK_ENABLED=false — set to true sebelum recompute-crop"
+        )
+
+    required = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
+    missing = [k for k in required if not os.getenv(k)]
+    if missing:
+        raise click.ClickException(f"Missing env vars: {', '.join(missing)}")
+
+    from kabupaten import KABUPATEN_IDS
+    from storage import get_supabase_client
+
+    targets = [kabupaten] if kabupaten else list(KABUPATEN_IDS)
+    if kabupaten and kabupaten not in KABUPATEN_IDS:
+        raise click.ClickException(f"unknown kabupaten: {kabupaten}")
+
+    client = get_supabase_client()
+
+    # Fetch composites yang belum punya _crop data
+    all_composites: list[dict] = []
+    for kid in targets:
+        rows = (
+            client.table("sentinel_composites")
+            .select("id, kabupaten_id, period_start, period_end")
+            .eq("kabupaten_id", kid)
+            .eq("status", "completed")
+            .execute()
+            .data or []
+        )
+        # Check yang mana sudah punya ndvi_crop
+        for row in rows:
+            crop_check = (
+                client.table("vegetation_indices")
+                .select("id")
+                .eq("kabupaten_id", kid)
+                .eq("index_name", "ndvi_crop")
+                .gte("observation_date", row["period_start"])
+                .lte("observation_date", row["period_end"])
+                .limit(1)
+                .execute()
+                .data or []
+            )
+            if not crop_check:
+                all_composites.append(row)
+
+    total = len(all_composites)
+    eta_hours = total * 6 / 5  # 6 jobs per composite, ~5 jobs/hour CDSE free
+    log.info(
+        "recompute-crop: %d composites without _crop data (ETA ~%.0f hours @ 5 jobs/hr throttle)",
+        total, eta_hours
+    )
+
+    if dry_run:
+        for i, row in enumerate(all_composites[:10]):
+            log.info("  [%d] %s %s..%s", i + 1, row["kabupaten_id"], row["period_start"], row["period_end"])
+        if total > 10:
+            log.info("  ... %d more", total - 10)
+        log.info("dry-run done. Remove --dry-run to start (ETL_CROPLAND_MASK_ENABLED must be true).")
+        return
+
+    failures: list[tuple] = []
+    for i, row in enumerate(all_composites):
+        kid = row["kabupaten_id"]
+        ws = row["period_start"]
+        we = row["period_end"]
+        log.info("── [%d/%d] %s %s..%s", i + 1, total, kid, ws, we)
+        req_obj = __import__("openeo_pipeline").CompositeRequest(
+            kabupaten_id=kid, start_date=ws, end_date=we
+        )
+        try:
+            _run_composite(req_obj, upload=True)
+        except Exception as exc:
+            log.exception("recompute-crop %s %s..%s failed: %s", kid, ws, we, exc)
+            failures.append((kid, ws, we, str(exc)[:120]))
+        if i < total - 1:
+            time.sleep(delay_sec)
+
+    log.info("recompute-crop done: ok=%d failed=%d", total - len(failures), len(failures))
+    if failures:
+        for kid, ws, we, msg in failures:
+            log.warning("  ✗ %s %s..%s: %s", kid, ws, we, msg)
 
 
 @cli.command("train-yield")

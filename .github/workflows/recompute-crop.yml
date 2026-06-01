@@ -1,0 +1,118 @@
+name: ETL - Recompute Cropland (_crop) Variants
+
+# Track B — Phase 2 Step 13.
+# TUNGGU sampai Pontianak per-year backfill selesai sebelum trigger.
+# Throttle: 1 composite per ~120 detik = ~5 batch jobs/jam (CDSE free quota safe).
+#
+# Prasyarat:
+# - ETL_CROPLAND_MASK_ENABLED=true di GH Secret
+# - WorldCover tiles uploaded ke Supabase assets/worldcover/
+# - Migration 011 deployed (CHECK constraint accept _crop variants)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kabupaten:
+        description: 'Kabupaten id (kosong = semua 14)'
+        required: false
+        type: string
+      delay_sec:
+        description: 'Sleep antar composite (detik, default 120 = ~5 jobs/jam)'
+        required: false
+        default: '120'
+      dry_run:
+        description: 'Dry run — show plan only, no CDSE submission'
+        required: false
+        default: 'false'
+        type: boolean
+
+concurrency:
+  group: etl-recompute-crop
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recompute-crop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440  # 24 jam — 108 composites x ~13 min each
+    defaults:
+      run:
+        working-directory: workers/etl
+    env:
+      CDSE_REFRESH_TOKEN:          ${{ secrets.CDSE_REFRESH_TOKEN }}
+      CDSE_CLIENT_ID:              ${{ secrets.CDSE_CLIENT_ID }}
+      CDSE_CLIENT_SECRET:          ${{ secrets.CDSE_CLIENT_SECRET }}
+      CDSE_OPENEO_URL:             https://openeo.dataspace.copernicus.eu
+      SUPABASE_URL:                ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY:   ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_STORAGE_BUCKET:     composites
+      ETL_CROPLAND_MASK_ENABLED:   ${{ secrets.ETL_CROPLAND_MASK_ENABLED }}
+      ETL_RESOLUTION_M:            '100'
+      LOG_LEVEL:                   INFO
+      INPUT_KABUPATEN:             ${{ inputs.kabupaten }}
+      INPUT_DELAY_SEC:             ${{ inputs.delay_sec }}
+      INPUT_DRY_RUN:               ${{ inputs.dry_run }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: 'latest'
+          enable-cache: true
+
+      - run: uv python install 3.11
+      - run: uv sync --frozen || uv sync
+
+      - name: Verify prerequisites
+        run: |
+          if [ "$ETL_CROPLAND_MASK_ENABLED" != "true" ]; then
+            echo "::error::ETL_CROPLAND_MASK_ENABLED secret must be 'true' to run recompute-crop"
+            echo "Set via: gh secret set ETL_CROPLAND_MASK_ENABLED --body 'true'"
+            exit 1
+          fi
+          if [ -z "$CDSE_REFRESH_TOKEN" ] && [ -z "$CDSE_CLIENT_ID" ]; then
+            echo "::error::Set CDSE_REFRESH_TOKEN atau CDSE_CLIENT_ID+SECRET"
+            exit 1
+          fi
+          for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            [ -n "${!var}" ] || { echo "::error::Missing $var"; exit 1; }
+          done
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            case "$INPUT_KABUPATEN" in
+              *[!a-z0-9-]*) echo "::error::Invalid kabupaten id"; exit 1 ;;
+            esac
+          fi
+
+      - name: Dry-run plan
+        run: |
+          ARGS=(--delay-sec "$INPUT_DELAY_SEC" --dry-run)
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            ARGS+=(--kabupaten "$INPUT_KABUPATEN")
+          fi
+          uv run python main.py recompute-crop "${ARGS[@]}"
+
+      - name: Run recompute-crop
+        if: inputs.dry_run != 'true'
+        run: |
+          ARGS=(--delay-sec "$INPUT_DELAY_SEC")
+          if [ -n "$INPUT_KABUPATEN" ]; then
+            ARGS+=(--kabupaten "$INPUT_KABUPATEN")
+          fi
+          uv run python main.py recompute-crop "${ARGS[@]}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "# ETL Recompute Crop Run"
+            echo "- **Kabupaten:** ${INPUT_KABUPATEN:-all 14}"
+            echo "- **Delay:** ${INPUT_DELAY_SEC}s antara composite"
+            echo "- **Dry run:** $INPUT_DRY_RUN"
+            echo "- **Cropland mask enabled:** $ETL_CROPLAND_MASK_ENABLED"
+            echo "- **Status:** ${{ job.status }}"
+            echo ""
+            echo "> Setelah selesai: jalankan baseline workflow untuk _crop indices"
+          } >> "$GITHUB_STEP_SUMMARY"

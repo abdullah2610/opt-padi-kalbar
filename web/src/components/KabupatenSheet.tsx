@@ -1,6 +1,6 @@
 import { useMapStore } from '@/store/mapStore';
 import { useKabupatenList } from '@/hooks/useKabupaten';
-import { useIndicesSeries, useDiseaseRisk, useYield, useAlerts, useLandcover } from '@/hooks/useApi';
+import { useIndicesSeries, useDiseaseRisk, useYield, useAlerts, useLandcover, useCompositeMeta } from '@/hooks/useApi';
 import IndexTimeseries from './IndexTimeseries';
 import DiseaseRiskBadge from './DiseaseRiskBadge';
 import YieldCard from './YieldCard';
@@ -8,6 +8,8 @@ import AlertList from './AlertList';
 import LandcoverDonut from './LandcoverDonut';
 import InfoTooltip from './InfoTooltip';
 import { Link } from 'react-router-dom';
+
+const CROP_ENABLED = import.meta.env.VITE_DISPLAY_CROPLAND_DEFAULT === 'true';
 
 const INDEX_INFO: Record<string, { title: string; desc: string; range: string }> = {
   ndvi:  { title: 'NDVI',  desc: 'Normalized Difference Vegetation Index. Kesehatan vegetasi.',         range: '<0.2 tanah / 0.4-0.6 vegetatif / >0.6 sehat' },
@@ -27,6 +29,8 @@ export default function KabupatenSheet() {
   const { data: yieldEst } = useYield(selectedKabupatenId);
   const { data: alerts } = useAlerts(selectedKabupatenId);
   const { data: landcover } = useLandcover(selectedKabupatenId);
+  const { data: compositeMeta } = useCompositeMeta(selectedKabupatenId);
+  const croplandAreaHa = compositeMeta?.[0]?.cropland_area_ha ?? null;
 
   if (!selectedKabupatenId || !kab) return null;
 
@@ -101,9 +105,18 @@ export default function KabupatenSheet() {
               <div>Distribusi class dari ESA WorldCover 10m 2021.</div>
               <div className="text-slate-400">Class: cropland, hutan, water, urban, dll.</div>
               <div className="text-slate-500">Konteks: % area sawah dari total kabupaten.</div>
+              <Link to="/panduan?section=cropland" className="mt-1 inline-block text-padi-400 underline">Pelajari cropland mask →</Link>
             </InfoTooltip>
           </div>
           <LandcoverDonut classes={landcover ?? []} />
+          {CROP_ENABLED && croplandAreaHa != null && (
+            <div className="mt-1 text-xs text-slate-500">
+              Luas cropland (WorldCover 2021):{' '}
+              <span className="font-medium text-emerald-400">
+                {croplandAreaHa.toLocaleString('id-ID', { maximumFractionDigits: 0 })} ha
+              </span>
+            </div>
+          )}
         </section>
 
         <section className="mb-2">

@@ -76,4 +76,5 @@ export interface CompositeMeta {
   scl_clear_pct: number;
   cog_paths: Record<string, string>;
   status: string;
+  cropland_area_ha?: number | null;
 }
