@@ -48,9 +48,9 @@ echo "─── CDSE Auth ───"
 
 TOKEN_CACHE="$HOME/.local/share/openeo-python-client/refresh-tokens.json"
 if [[ -f "$TOKEN_CACHE" ]]; then
-  TOKEN=$(python3 -c "
-import json, sys
-data = json.load(open('$TOKEN_CACHE'))
+  TOKEN=$(TOKEN_CACHE="$TOKEN_CACHE" python3 -c "
+import json, os, sys
+data = json.load(open(os.environ['TOKEN_CACHE']))
 for issuer, clients in data.items():
     if 'copernicus' not in issuer: continue
     for cid, info in clients.items():
@@ -69,10 +69,12 @@ else
   echo "   Jalankan dulu: cd workers/etl && uv run python main.py login"
   echo ""
   echo "   Alternatif: OAuth client credentials"
-  if [[ -n "${CDSE_CLIENT_ID:-}" ]]; then
+  if [[ -n "${CDSE_CLIENT_ID:-}" && -n "${CDSE_CLIENT_SECRET:-}" ]]; then
     gh secret set CDSE_CLIENT_ID --body "$CDSE_CLIENT_ID"
-    gh secret set CDSE_CLIENT_SECRET --body "${CDSE_CLIENT_SECRET:-}"
+    gh secret set CDSE_CLIENT_SECRET --body "$CDSE_CLIENT_SECRET"
     echo "✓ CDSE_CLIENT_ID + CDSE_CLIENT_SECRET (dari .env.local)"
+  else
+    echo "✗ CDSE_CLIENT_ID atau CDSE_CLIENT_SECRET missing di .env.local"
   fi
 fi
 

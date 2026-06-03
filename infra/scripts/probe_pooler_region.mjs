@@ -72,7 +72,6 @@ async function main() {
           const next = envText
             .split('\n')
             .filter((l) => !l.startsWith('SUPABASE_REGION=') && !l.startsWith('SUPABASE_POOLER_HOST='))
-            .filter((l) => l.length > 0)
             .concat([`SUPABASE_REGION=${r}`, `SUPABASE_POOLER_HOST=${host}`, ''])
             .join('\n');
           writeFileSync(join(root, '.env.local'), next);

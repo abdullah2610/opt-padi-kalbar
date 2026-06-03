@@ -29,10 +29,7 @@ for i in "${!KABS[@]}"; do
   echo "[$((i+1))/13] Launching $KAB (delay ${DELAY}s, log: $LOGFILE)"
 
   # Sleep dulu (kecuali index 0), lalu jalankan backfill
-  (sleep "$DELAY" && cd "$ROOT" && uv run python main.py backfill --years "$YEAR" --kabupaten "$KAB" > "$LOGFILE" 2>&1; echo "EXIT:$?" >> "$LOGFILE") &
-
-  # Simpan PID
-  echo $! > "$LOGDIR/backfill_${KAB}.pid"
+  (sleep "$DELAY" && cd "$ROOT" && uv run python main.py backfill --years "$YEAR" --kabupaten "$KAB" > "$LOGFILE" 2>&1 & PY_PID=$!; echo "$PY_PID" > "$LOGDIR/backfill_${KAB}.pid"; wait "$PY_PID"; echo "EXIT:$?" >> "$LOGFILE") &
 done
 
 echo ""

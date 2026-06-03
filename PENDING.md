@@ -1,10 +1,31 @@
 # Pending — opt-padi-kalbar
 
-Daftar pekerjaan belum tuntas per 2026-05-30 sesi ke-5.
+Daftar pekerjaan belum tuntas per 2026-06-03 sesi ke-5.
 
 ---
 
 ## ✅ Completed
+
+### Baseline NDVI 2025 — SELESAI (2026-06-03)
+- **Status:** ✅ 384 DOY buckets di `index_baselines` untuk 14 kabupaten
+- **6 indeks:** ndvi, ndwi, mndwi, ndmi, msi, evi
+- **Per kabupaten:**
+  | Kab | Buckets | Sampel |
+  |---|---|---|
+  | bengkayang, kubu-raya, mempawah | 42 | 7 windows |
+  | pontianak, sambas | 36 | 6 windows |
+  | landak | 30 | 5 windows |
+  | ketapang, sanggau, sekadau | 24 | 4 windows |
+  | kapuas-hulu, melawi, singkawang, sintang | 18 | 3 windows |
+  | kayong-utara | 12 | 2 windows |
+- **Catatan:** sparse baseline (1 sampel per DOY → std fallback 0.05). `compute_anomaly_z` RPC bisa lookup untuk semua kab.
+- **Dampak:** `detect_stress` trigger alert aktif untuk composite baru.
+
+### Backfill 2025 partial — SELESAI (dihentikan karena CDSE tidak reliable)
+- **Status:** ⚪ Dihentikan 2026-06-01 — 35 composite sukses dari 132 attempt (27%)
+- **CDSE free tier:** 73% failure rate (ReadTimeout + TokenInvalid), tidak feasible untuk 13 kab paralel
+- **Data tersimpan:** 696 vegetation_indices rows untuk 2025 (digunakan build baseline)
+- **Strategi alternatif:** baseline dari data 2025 sudah cukup untuk compute z-score awal. Data akan terisi natural via ETL cron kedepan.
 
 ### ETL batch-all 13 kab @100m
 - **Task ID:** `b5z6a5mpn` (started 2026-05-23 20:44)
@@ -20,18 +41,6 @@ Daftar pekerjaan belum tuntas per 2026-05-30 sesi ke-5.
   | kapuas-hulu, melawi, sintang, kubu-raya, singkawang | 1 | 6 masing-masing |
 
 ---
-
-## 🟡 Sedang Dieksekusi
-
-### 1. Backfill historical 2025 untuk 13 kabupaten
-- **Status:** 🔵 **BERJALAN** — dimulai 2026-05-30 11:51 WIB
-- **Strategi:** 13 worker paralel staggered 15 menit (skip Pontianak — 0 cropland, @10m inkonsisten)
-- **Script:** `workers/etl/run_backfill_parallel.sh`
-- **Estimasi:** ~8 hari (936 batch jobs × 6 indeks, @5/jam CDSE free)
-- **Log:** `workers/etl/logs/backfill_{kab}.log`
-- **Monitor:** `tail -f workers/etl/logs/backfill_*.log`
-- **Stop darurat:** `kill $(cat workers/etl/logs/backfill_*.pid)`
-- **Setelah selesai:** lanjut `uv run python main.py baseline --years 2025` → `index_baselines` terisi → z-score anomaly aktif
 
 ## 🟡 Belum Dieksekusi (Code Siap)
 

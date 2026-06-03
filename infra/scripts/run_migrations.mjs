@@ -37,7 +37,7 @@ function readEnv(name) {
   try {
     const envText = readFileSync(join(root, '.env.local'), 'utf8');
     for (const line of envText.split('\n')) {
-      const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
       if (m && m[1] === name) return m[2].trim().replace(/^['"]|['"]$/g, '');
     }
   } catch {
@@ -69,7 +69,7 @@ function toPoolerUrl(url) {
   const explicitHost = readEnv('SUPABASE_POOLER_HOST');
   const region = readEnv('SUPABASE_REGION') || 'ap-southeast-1';
   const host = explicitHost || `aws-0-${region}.pooler.supabase.com`;
-  return `postgresql://${user}.${projectRef}:${pass}@${host}:5432${rest}`;
+  return `postgresql://${user}.${projectRef}:${encodeURIComponent(pass)}@${host}:5432${rest}`;
 }
 
 function listMigrations() {

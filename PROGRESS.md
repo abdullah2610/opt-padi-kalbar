@@ -1,43 +1,25 @@
 # Progress — opt-padi-kalbar
-### Backfill Paralel (2026-05-30 aktif)
 
-```bash
-# Monitor live
-tail -f workers/etl/logs/backfill_*.log
-
-# Status worker
-ps aux | grep "main.py backfill" | grep python
-
-# Stop darurat
-kill $(cat workers/etl/logs/backfill_*.pid)
-```
-
-**Stagger:** 15 menit antar kabupaten, dimulai sambas 11:51 WIB:
-| Waktu (WIB) | Kabupaten |
-|---|---|
-| 11:51 | sambas |
-| 12:06 | bengkayang |
-| 12:21 | landak |
-| 12:36 | mempawah |
-| 12:51 | sanggau |
-| 13:06 | ketapang |
-| 13:21 | sintang |
-| 13:36 | kapuas-hulu |
-| 13:51 | sekadau |
-| 14:06 | melawi |
-| 14:21 | kayong-utara |
-| 14:36 | kubu-raya |
-| 14:51 | singkawang |
-
-Estimasi: 12 composite windows × 6 indeks = 72 batch jobs CDSE per kabupaten (~14 jam/kab).
-Total 936 jobs, @5/jam = ~188 jam (~8 hari).
 Status pengerjaan aplikasi web mobile-first pemantauan padi 14 kab/kota Kalbar dgn Sentinel-2.
 
-**Tanggal update:** 2026-05-30 (sesi ke-5: backfill paralel 13 kabupaten 2025 + Track A WorldCover selesai)
+**Tanggal update:** 2026-06-03 (sesi ke-5: baseline 2025 selesai — 384 DOY buckets 14 kab, backfill dihentikan)
 **Plan asli:** `.claude/plans/streamed-imagining-thunder.md`
 **Arsitektur:** `ARCHITECTURE.md`
 
-## Perubahan Sesi ke-5 (2026-05-30)
+## Perubahan Sesi ke-5 (2026-06-03)
+
+### Baseline 2025 selesai
+- **`index_baselines` terisi: 384 DOY buckets untuk 14 kabupaten** (6 indeks: ndvi/ndwi/mndwi/ndmi/msi/evi)
+- `compute_anomaly_z` RPC sekarang bisa lookup baseline → z-score anomaly aktif
+- `detect_stress` trigger alert siap untuk composite baru
+- Data 2025 sparse (1 sampel per DOY, std fallback 0.05) — akan terisi natural via ETL cron
+
+### Backfill 2025 dihentikan
+- CDSE free tier tidak reliable untuk 13 kab paralel: 73% failure rate (ReadTimeout, TokenInvalid)
+- 35 composite sukses dari 132 attempt (27%) — 696 vegetation_indices rows 2025
+- Strategi: gunakan data 2025 yang sudah ada untuk baseline, data historis terisi via ETL cron
+
+## Perubahan Sesi Sebelumnya (2026-05-30)
 
 - **Track A — ESA WorldCover Cropland Mask SELESAI**:
   - P0-1 Download 10 tile WorldCover dari ESA S3 (138 MB)
@@ -106,20 +88,19 @@ Status pengerjaan aplikasi web mobile-first pemantauan padi 14 kab/kota Kalbar d
 |---|---|---|---|
 | 0 | Scaffold monorepo | ✅ Done | — |
 | 1 | GeoJSON kabupaten + DB migrations | ✅ 001-011 applied + 14 kabupaten seeded | Migration 011 cropland mask active |
-| 2 | Python ETL openEO Sentinel-2 | 🟡 Backfill 13 kab 2025 berjalan | 8 hari estimasi, paralel staggered |
+| 2 | Python ETL openEO Sentinel-2 | 🟡 Partial — baseline 2025 sudah, backfill 2021-2024 belum | 696 rows 2025, 384 DOY baseline buckets |
 | 3 | TiTiler tile serving | ✅ Live di Fly.io | — |
-| 4 | Analytics modules | ✅ API + SQL + data Sentinel-2 real | baseline belum terisi, anomaly_z NULL |
+| 4 | Analytics modules | ✅ anomaly_z aktif via baseline 2025 | sparse (1 sampel/DOY), terisi via ETL cron |
 | 5 | Vercel REST API endpoints | ✅ Live | sipopt.agroinovasi.my.id + opt-padi-kalbar.vercel.app |
 | 6 | Mobile-first React frontend | ✅ Done MVP | Typecheck + build hijau |
 | 7 | Deploy & observability | 🟡 Partial | Sentry DSN belum diset di production |
 | 8 | Auth multi-role | 🔒 Deferred | — |
 | — | **Track A (WorldCover)** | ✅ **Selesai** | Dual-save raw + _crop, 12 indeks per composite |
-| — | **Track B (Recompute-crop)** | ⏳ Menunggu backfill | 108 composites tanpa _crop menunggu data historical |
+| — | **Track B (Recompute-crop)** | ⚪ Belum | 108 composites tanpa _crop, prioritas rendah |
 
-**Pekerjaan aktif:**
-- 🟡 Backfill 13 kabupaten 2025 — 13 process berjalan, sambas composite 1/12
-- ⚪ Recompute-crop 108 composites + baseline `_crop` — tunggu backfill selesai
-- ⚪ Baseline 5 tahun `index_baselines` — tunggu backfill selesai
+**Pekerjaan tersisa:**
+- ⚪ Recompute-crop 108 composites + baseline `_crop` — prioritas rendah, bisa nanti
+- ⚪ Backfill 2021-2024 — CDSE free tier tidak feasible, perlu alternatif (MODIS / paid)
 - ⚪ Sentry DSN production — env belum diset di Vercel
 - ⚪ GitHub Actions secrets — belum diset di repo
 

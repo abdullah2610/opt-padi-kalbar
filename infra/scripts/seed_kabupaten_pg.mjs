@@ -5,7 +5,7 @@
  *
  * Usage: node infra/scripts/seed_kabupaten_pg.mjs
  */
-import { readFile, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile as readFileAsync } from 'node:fs/promises';
@@ -17,7 +17,7 @@ function readEnv(name) {
   try {
     const txt = readFileSync(join(root, '.env.local'), 'utf8');
     for (const line of txt.split('\n')) {
-      const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
       if (m && m[1] === name) return m[2].trim().replace(/^['"]|['"]$/g, '');
     }
   } catch { /* skip */ }
@@ -40,7 +40,7 @@ function toPoolerUrl(url) {
   const host = readEnv('SUPABASE_POOLER_HOST');
   const region = readEnv('SUPABASE_REGION') || 'ap-southeast-1';
   const poolerHost = host || `aws-0-${region}.pooler.supabase.com`;
-  return `postgresql://${user}.${projectRef}:${pass}@${poolerHost}:5432${rest}`;
+  return `postgresql://${user}.${projectRef}:${encodeURIComponent(pass)}@${poolerHost}:5432${rest}`;
 }
 
 function ringToWkt(ring) {

@@ -7,6 +7,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 LOGDIR="$ROOT/logs_v2"
+[[ -z "$LOGDIR" ]] && { echo "ERROR: LOGDIR empty"; exit 1; }
 rm -rf "$LOGDIR"
 mkdir -p "$LOGDIR"
 
@@ -28,8 +29,7 @@ for i in "${!KABS[@]}"; do
   echo "[$((i+1))/13] $KAB (start in ${DELAY}s, delay-composite ${DELAY_COMPOSITE}s)"
   (sleep "$DELAY" && cd "$ROOT" && uv run python main.py backfill \
     --years "$YEAR" --kabupaten "$KAB" --delay-sec "$DELAY_COMPOSITE" \
-    > "$LOGFILE" 2>&1) &
-  echo $! > "$LOGDIR/backfill_${KAB}.pid"
+    > "$LOGFILE" 2>&1 & PY_PID=$!; echo "$PY_PID" > "$LOGDIR/backfill_${KAB}.pid"; wait "$PY_PID"; echo "EXIT:$?" >> "$LOGFILE") &
 done
 
 echo ""
