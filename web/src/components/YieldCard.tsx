@@ -8,7 +8,9 @@ const fmtTon = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const fmtDec = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 });
 
 export default function YieldCard({ estimate }: Props) {
-  if (!estimate) return <div className="text-xs text-slate-500">Belum ada estimasi.</div>;
+  if (!estimate || estimate.model_version === 'dummy-v0') {
+    return <div className="text-xs text-slate-500">Belum ada estimasi panen riil.</div>;
+  }
   return (
     <div className="rounded-lg bg-slate-800/70 p-3 ring-1 ring-slate-700">
       <div className="mb-1 flex items-center justify-between">
@@ -25,7 +27,7 @@ export default function YieldCard({ estimate }: Props) {
       <div className="text-xs text-slate-400">
         {fmtDec.format(estimate.ton_per_ha)} ton/ha • {fmtTon.format(estimate.area_sawah_ha)} ha sawah
       </div>
-      <div className="mt-1 text-[10px] text-slate-500">model: {estimate.model_version}</div>
+      <div className="mt-1 text-[10px] text-slate-500">{estimate.model_version}</div>
     </div>
   );
 }
